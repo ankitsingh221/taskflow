@@ -1,6 +1,7 @@
 import "dotenv/config";
 import IORedis from "ioredis";
 import { Worker } from "bullmq";
+import prisma from "../config/prisma.js";
 
 const connection = new IORedis({
   host: process.env.REDIS_HOST,
@@ -12,16 +13,33 @@ const worker = new Worker(
   "taskflow-queue",
 
   async (job) => {
-    console.log("\n📥 Job received");
-    console.log("Job ID:", job.id);
-    console.log("Job name:", job.name);
-    console.log("Job data:", job.data);
+    console.log(`📥 Processing job ${job.id}`);
+
+    await prisma.job.update({
+      where: {
+        jobId: job.id,
+      },
+      data: {
+        status: "active",
+        startedAt: new Date(),
+        attempts: job.attemptsMade,
+      },
+    });
 
     await job.updateProgress(25);
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     await job.updateProgress(50);
+
+    await prisma.job.update({
+      where: {
+        jobId: job.id,
+      },
+      data: {
+        progress: 50,
+      },
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
@@ -31,29 +49,43 @@ const worker = new Worker(
 
     await job.updateProgress(100);
 
-    console.log(`✅ Job ${job.id} completed`);
-
-    return {
+    const result = {
       success: true,
       message: "Job processed successfully",
     };
-  },
 
+    await prisma.job.update({
+      where: {
+        jobId: job.id,
+      },
+      data: {
+        status: "completed",
+        progress: 100,
+        result,
+        completedAt: new Date(),
+      },
+    });
+
+    return result;
+  },
   {
     connection,
   }
 );
 
-worker.on("completed", (job) => {
-  console.log(`🎉 Job ${job.id} marked as completed`);
-});
+worker.on("failed", async (job, error) => {
+  if (!job) return;
 
-worker.on("failed", (job, error) => {
-  console.error(`❌ Job ${job?.id} failed:`, error.message);
-});
+  console.error(`❌ Job ${job.id} failed`);
 
-worker.on("error", (error) => {
-  console.error("❌ Worker error:", error);
+  await prisma.job.update({
+    where: {
+      jobId: job.id,
+    },
+    data: {
+      status: "failed",
+      error: error.message,
+      attempts: job.attemptsMade,
+    },
+  });
 });
-
-console.log("👷 TaskFlow Worker started...");

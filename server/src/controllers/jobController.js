@@ -11,20 +11,30 @@ export const createJob = async (req, res) => {
         message: "Job name is required",
       });
     }
-
     console.log("Adding job to queue...");
     console.log("Name:", name);
     console.log("Data:", data);
 
     const job = await jobQueue.add(name, data || {});
-
-    console.log("Job added:", job.id);
+    const dbJob = await prisma.job.create({
+      data: {
+        jobId: job.id,
+        name: job.name,
+        status: "waiting",
+        progress: 0,
+        payload: data || {},
+      },
+    });
 
     return res.status(201).json({
       success: true,
-      message: "Job added to queue",
-      jobId: job.id,
-      jobName: job.name,
+      message: "Job created successfully",
+     job: {
+        id: dbJob.id,
+        jobId: dbJob.jobId,
+        name: dbJob.name,
+        status: dbJob.status,
+      },
     });
   } catch (error) {
     console.error("❌ Create job error:");
@@ -38,7 +48,7 @@ export const createJob = async (req, res) => {
   }
 };
 
- export const getJobStatus = async (req, res) => {
+export const getJobStatus = async (req, res) => {
   try {
     const { id } = req.params;
 
