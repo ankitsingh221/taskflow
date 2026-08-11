@@ -25,6 +25,7 @@ model Job {
 
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
+  scheduledAt DateTime?
   completedAt DateTime?
   failedAt    DateTime?
 }

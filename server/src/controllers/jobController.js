@@ -2,9 +2,19 @@ import jobQueue from "../queues/jobQueue.js";
 import { getJobById } from "../services/jobServices.js";
 import prisma from "../config/prisma.js";
 
+const MAX_DELAY = 7 * 24 * 60 * 60 * 1000; // ✅ This is fine (top-level)
+
 export const createJob = async (req, res) => {
   try {
-    const { name, data, priority = 1 } = req.body;
+    const { name, data, priority = 1, delay } = req.body;
+
+    // ✅ Validation starts here (inside function)
+    if (!name) {
+      return res.status(400).json({
+        success: false,
+        message: "Job name is required",
+      });
+    }
 
     if (!Number.isInteger(priority) || priority < 1 || priority > 10) {
       return res.status(400).json({
@@ -13,36 +23,47 @@ export const createJob = async (req, res) => {
       });
     }
 
-    if (!name) {
+    if (!Number.isInteger(delay) || delay < 0) {
       return res.status(400).json({
         success: false,
-        message: "Job name is required",
+        message: "Delay must be a non-negative integer",
       });
     }
+
+    if (delay > MAX_DELAY) {
+      return res.status(400).json({
+        success: false,
+        message: "Delay cannot exceed 7 days",
+      });
+    }
+
+    const scheduledAt = delay > 0 ? new Date(Date.now() + delay) : null;
+    
     console.log("Adding job to queue...");
     console.log("Name:", name);
     console.log("Data:", data);
 
     const job = await jobQueue.add(name, data || {}, {
       priority,
+      delay : delay,
       attempts: 3,
-
       backoff: {
         type: "exponential",
         delay: 2000,
       },
-
       removeOnComplete: true,
       removeOnFail: false,
     });
+
     const dbJob = await prisma.job.create({
       data: {
         jobId: job.id,
         name: job.name,
-        status: "waiting",
+        status: delay > 0 ? "scheduled" : "waiting", // ✅ Use scheduled status if delayed
         priority,
         progress: 0,
         payload: data || {},
+        scheduledAt,
       },
     });
 
