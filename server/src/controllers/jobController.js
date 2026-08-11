@@ -4,7 +4,14 @@ import prisma from "../config/prisma.js";
 
 export const createJob = async (req, res) => {
   try {
-    const { name, data } = req.body;
+    const { name, data, priority = 1 } = req.body;
+
+    if (!Number.isInteger(priority) || priority < 1 || priority > 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Priority must be an integer between 1 and 10",
+      });
+    }
 
     if (!name) {
       return res.status(400).json({
@@ -16,22 +23,24 @@ export const createJob = async (req, res) => {
     console.log("Name:", name);
     console.log("Data:", data);
 
-    const job = await jobQueue.add(name, data || {},{
-       attempts:3,
+    const job = await jobQueue.add(name, data || {}, {
+      priority,
+      attempts: 3,
 
-       backoff:{
-         type : 'exponential',
-         delay : 2000,
-       },
+      backoff: {
+        type: "exponential",
+        delay: 2000,
+      },
 
-       removeOnComplete: true,
-       removeOnFail: false,
+      removeOnComplete: true,
+      removeOnFail: false,
     });
     const dbJob = await prisma.job.create({
       data: {
         jobId: job.id,
         name: job.name,
         status: "waiting",
+        priority,
         progress: 0,
         payload: data || {},
       },
@@ -40,11 +49,12 @@ export const createJob = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Job created successfully",
-     job: {
+      job: {
         id: dbJob.id,
         jobId: dbJob.jobId,
         name: dbJob.name,
         status: dbJob.status,
+        priority: dbJob.priority,
       },
     });
   } catch (error) {

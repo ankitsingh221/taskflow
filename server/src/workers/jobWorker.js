@@ -4,7 +4,7 @@ import { Worker } from "bullmq";
 import prisma from "../config/prisma.js";
 
 const QUEUE_NAME = "taskflow-queue";
-const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 5);
+const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 1);
 
 const STATUS = {
   ACTIVE: "active",
@@ -28,20 +28,23 @@ connection.on("error", (err) => {
 
 async function safeUpdateJob(jobId, data, context) {
   try {
-    await prisma.job.update({ where: { jobId }, data });
+    await prisma.job.update({
+      where: { jobId },
+      data,
+    });
   } catch (err) {
-    console.error(`⚠️  DB update failed (${context}) for job ${jobId}:`, err.message);
+    console.error(
+      `❌ DB update failed (${context}) for job ${jobId}:`,
+      err.message
+    );
+
+    throw err;
   }
 }
-
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
     console.log(`📥 Processing job ${job.id}`);
-
-    if (job.data.shouldFail) {
-      throw new Error("Intentional test failure");
-    }
 
     await safeUpdateJob(
       job.id,
@@ -53,14 +56,28 @@ const worker = new Worker(
       "start"
     );
 
+    if (job.data.shouldFail) {
+      throw new Error("Intentional test failure");
+    }
+
     await job.updateProgress(25);
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    await new Promise((resolve) => setTimeout(resolve, 10000));
 
     await job.updateProgress(50);
-    await safeUpdateJob(job.id, { progress: 50 }, "progress-50");
+
+    await safeUpdateJob(
+      job.id,
+      {
+        progress: 50,
+      },
+      "progress-50"
+    );
+
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     await job.updateProgress(75);
+
     await new Promise((resolve) => setTimeout(resolve, 2000));
 
     await job.updateProgress(100);
@@ -86,10 +103,9 @@ const worker = new Worker(
   {
     connection,
     concurrency: CONCURRENCY,
-    lockDuration: 30_000, 
+    lockDuration: 30_000,
   }
 );
-
 
 worker.on("failed", async (job, error) => {
   if (!job) return;
@@ -98,7 +114,9 @@ worker.on("failed", async (job, error) => {
   const attemptsMade = job.attemptsMade || 0;
   const isFinalAttempt = attemptsMade >= maxAttempts;
 
-  console.error(`❌ Job ${job.id} failed on attempt ${attemptsMade}/${maxAttempts}`);
+  console.error(
+    `❌ Job ${job.id} failed on attempt ${attemptsMade}/${maxAttempts}`
+  );
 
   await safeUpdateJob(
     job.id,
@@ -112,8 +130,9 @@ worker.on("failed", async (job, error) => {
         }
       : {
           status: STATUS.RETRYING,
-          error: error.message,
+          isDeadLetter: false,
           attempts: attemptsMade,
+          error: error.message,
         },
     "failed"
   );
@@ -125,18 +144,7 @@ worker.on("failed", async (job, error) => {
   );
 });
 
-worker.on("error", (err) => {
- 
-  console.error("🧯 Worker error:", err);
-});
 
-worker.on("completed", (job) => {
-  console.log(`✅ Job ${job.id} completed`);
-});
-
-// Graceful shutdown
-// Without this, SIGTERM (e.g. container redeploys) kills the process
-// mid-job, leaving it stuck "active" forever with a stale lock.
 async function shutdown(signal) {
   console.log(`\n${signal} received, shutting down worker gracefully...`);
   try {

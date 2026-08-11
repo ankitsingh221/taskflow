@@ -12,6 +12,7 @@ model Job {
   jobId    String  @unique
   name     String
   status   String
+  priority Int     @default(1)
   progress Int     @default(0)
   payload  Json?
   result   Json?
