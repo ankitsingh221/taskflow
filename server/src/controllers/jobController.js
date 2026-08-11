@@ -1,5 +1,6 @@
 import jobQueue from "../queues/jobQueue.js";
 import { getJobById } from "../services/jobServices.js";
+import prisma from "../config/prisma.js";
 
 export const createJob = async (req, res) => {
   try {
@@ -15,7 +16,17 @@ export const createJob = async (req, res) => {
     console.log("Name:", name);
     console.log("Data:", data);
 
-    const job = await jobQueue.add(name, data || {});
+    const job = await jobQueue.add(name, data || {},{
+       attempts:3,
+
+       backoff:{
+         type : 'exponential',
+         delay : 2000,
+       },
+
+       removeOnComplete: true,
+       removeOnFail: false,
+    });
     const dbJob = await prisma.job.create({
       data: {
         jobId: job.id,

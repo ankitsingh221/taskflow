@@ -14,6 +14,10 @@ const worker = new Worker(
 
   async (job) => {
     console.log(`📥 Processing job ${job.id}`);
+        
+    if (job.data.shouldFail) {
+    throw new Error("Intentional test failure");
+  }
 
     await prisma.job.update({
       where: {
@@ -22,7 +26,7 @@ const worker = new Worker(
       data: {
         status: "active",
         startedAt: new Date(),
-        attempts: job.attemptsMade,
+        attempts: job.attemptsMade +1 ,
       },
     });
 
@@ -76,16 +80,40 @@ const worker = new Worker(
 worker.on("failed", async (job, error) => {
   if (!job) return;
 
-  console.error(`❌ Job ${job.id} failed`);
+  console.error(
+    `❌ Job ${job.id} failed on attempt ${job.attemptsMade}:`,
+    error.message
+  );
 
-  await prisma.job.update({
-    where: {
-      jobId: job.id,
-    },
-    data: {
-      status: "failed",
-      error: error.message,
-      attempts: job.attemptsMade,
-    },
-  });
+  const maxAttempts = job.opts.attempts || 1;
+
+  if (job.attemptsMade >= maxAttempts) {
+    await prisma.job.update({
+      where: {
+        jobId: job.id,
+      },
+      data: {
+        status: "failed",
+        error: error.message,
+        attempts: job.attemptsMade,
+      },
+    });
+
+    console.log(`💀 Job ${job.id} permanently failed`);
+  } else {
+    await prisma.job.update({
+      where: {
+        jobId: job.id,
+      },
+      data: {
+        status: "retrying",
+        error: error.message,
+        attempts: job.attemptsMade,
+      },
+    });
+
+    console.log(
+      `🔄 Job ${job.id} will retry (${job.attemptsMade}/${maxAttempts})`
+    );
+  }
 });
