@@ -6,6 +6,8 @@ import helmet from 'helmet';
 import pool from './config/database.js';
 import redisClient from './config/redis.js';
 
+import jobRoutes from './routes/jobRoutes.js';
+
 const app =  express();
 
 app.use(cors());
@@ -17,6 +19,9 @@ app.get('/', (req,res) =>{
         message:"taskflow api is running",
     });
 });
+
+app.use('/api/jobs', jobRoutes);
+
 
 const PORT = process.env.PORT || 5000;
 
