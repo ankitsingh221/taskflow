@@ -18,8 +18,12 @@ model Job {
   error    String?
 
   attempts Int @default(0)
+  maxAttempts Int @default(3)
+
+  isDeadLetter  Boolean @default(false)
 
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
   completedAt DateTime?
+  failedAt    DateTime?
 }

@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "Job" ADD COLUMN     "failedAt" TIMESTAMP(3),
+ADD COLUMN     "isDeadLetter" BOOLEAN NOT NULL DEFAULT false,
+ADD COLUMN     "maxAttempts" INTEGER NOT NULL DEFAULT 3;
