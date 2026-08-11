@@ -17,8 +17,19 @@ const worker = new Worker(
     console.log("Job name:", job.name);
     console.log("Job data:", job.data);
 
-    // Simulate job processing
-    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await job.updateProgress(25);
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    await job.updateProgress(50);
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    await job.updateProgress(75);
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+
+    await job.updateProgress(100);
 
     console.log(`✅ Job ${job.id} completed`);
 

@@ -1,4 +1,5 @@
 import jobQueue from "../queues/jobQueue.js";
+import { getJobById } from "../services/jobServices.js";
 
 export const createJob = async (req, res) => {
   try {
@@ -33,6 +34,33 @@ export const createJob = async (req, res) => {
       success: false,
       message: "Failed to create job",
       error: error.message,
+    });
+  }
+};
+
+ export const getJobStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const job = await getJobById(id);
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: "Job not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      job,
+    });
+  } catch (error) {
+    console.error("❌ Get job status error:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get job status",
     });
   }
 };
