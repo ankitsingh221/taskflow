@@ -497,7 +497,25 @@ worker.on("failed", async (job, error) => {
         },
     "failed",
   );
+    
+  if (isFinalAttempt) {
+  const failedDbJob = await prisma.job.findUnique({
+    where: {
+      jobId: logicalJobId,
+    },
+    select: {
+      id: true,
+    },
+  });
 
+  if (failedDbJob) {
+    console.log(
+      `🔗 Resolving dependents of failed job ${logicalJobId}`,
+    );
+
+    await resolveDependents(failedDbJob.id);
+  }
+}
   /*
    * Update current JobAttempt.
    */

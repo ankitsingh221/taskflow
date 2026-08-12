@@ -1,10 +1,10 @@
 import prisma from "../config/prisma.js";
 import jobQueue from "../queues/jobQueue.js";
 
-export const resolveDependents = async (completedJobId) => {
+export const resolveDependents = async (jobId) => {
   const dependents = await prisma.jobDependency.findMany({
     where: {
-      dependsOnJobId: completedJobId,
+      dependsOnJobId: jobId,
     },
     include: {
       job: true,
@@ -28,8 +28,60 @@ export const resolveDependents = async (completedJobId) => {
       },
     });
 
+    /*
+     * Check if ANY dependency failed.
+     */
+    const hasFailedDependency = allDependencies.some(
+      (dependency) =>
+        dependency.dependsOn.status === "failed"
+    );
+
+    if (hasFailedDependency) {
+      console.log(
+        `❌ Job ${dependentJob.jobId} has a failed dependency.`
+      );
+
+      await prisma.job.update({
+        where: {
+          id: dependentJob.id,
+        },
+        data: {
+          status: "failed",
+          isDeadLetter: false,
+          error: "Dependency job failed",
+          failedAt: new Date(),
+        },
+      });
+
+      console.log(
+        `💀 Job ${dependentJob.jobId} marked as failed because dependency failed`
+      );
+
+      /*
+       * IMPORTANT:
+       *
+       * If another job depends on this job,
+       * propagate the failure further.
+       *
+       * Example:
+       *
+       * A → B → C
+       *
+       * A fails
+       * B fails
+       * C must also fail
+       */
+      await resolveDependents(dependentJob.id);
+
+      continue;
+    }
+
+    /*
+     * Check whether ALL dependencies completed.
+     */
     const allCompleted = allDependencies.every(
-      (dependency) => dependency.dependsOn.status === "completed",
+      (dependency) =>
+        dependency.dependsOn.status === "completed"
     );
 
     if (!allCompleted) {
@@ -37,19 +89,9 @@ export const resolveDependents = async (completedJobId) => {
     }
 
     console.log(
-      `🔓 Job ${dependentJob.jobId} dependencies completed. Releasing job.`,
+      `🔓 Job ${dependentJob.jobId} dependencies completed. Releasing job.`
     );
 
-    /*
-     * IMPORTANT:
-     * Pass the logical job ID to BullMQ.
-     *
-     * The worker uses:
-     *
-     * job.data.logicalJobId
-     *
-     * to find the PostgreSQL Job.
-     */
     const bullmqJob = await jobQueue.add(
       dependentJob.name,
       {
@@ -65,7 +107,7 @@ export const resolveDependents = async (completedJobId) => {
         },
         removeOnComplete: true,
         removeOnFail: false,
-      },
+      }
     );
 
     await prisma.job.update({
@@ -79,7 +121,7 @@ export const resolveDependents = async (completedJobId) => {
     });
 
     console.log(
-      `🚀 Job ${dependentJob.jobId} added to BullMQ as ${bullmqJob.id}`,
+      `🚀 Job ${dependentJob.jobId} added to BullMQ as ${bullmqJob.id}`
     );
   }
 };
