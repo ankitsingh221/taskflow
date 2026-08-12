@@ -80,3 +80,21 @@ model JobDependency {
 
   @@unique([jobId, dependsOnJobId])
 }
+
+model Worker {
+  id           Int      @id @default(autoincrement())
+  workerId     String   @unique
+  status       String   @default("starting")
+
+  startedAt    DateTime @default(now())
+  lastHeartbeat DateTime?
+  stoppedAt      DateTime?
+
+  activeJobs   Int      @default(0)
+  concurrency  Int      @default(1)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@map("workers")
+}

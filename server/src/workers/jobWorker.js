@@ -1,12 +1,27 @@
 import "dotenv/config";
 import IORedis from "ioredis";
 import { Worker, UnrecoverableError } from "bullmq";
+
 import prisma from "../config/prisma.js";
 import { resolveDependents } from "../services/dependencyService.js";
 
+import {
+  registerWorker,
+  startHeartbeat,
+  stopHeartbeat,
+  incrementActiveJobs,
+  decrementActiveJobs,
+} from "../services/workerHealthService.js";
+
 const QUEUE_NAME = "taskflow-queue";
-const WORKER_ID = process.env.WORKER_ID || `worker-${process.pid}`;
-const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 1);
+
+const WORKER_ID =
+  process.env.WORKER_ID || `worker-${process.pid}`;
+
+const CONCURRENCY =
+  Number(process.env.WORKER_CONCURRENCY || 1);
+
+let heartbeatTimer = null;
 
 const STATUS = {
   ACTIVE: "active",
@@ -19,19 +34,32 @@ const STATUS = {
 const connection = new IORedis({
   host: process.env.REDIS_HOST,
   port: Number(process.env.REDIS_PORT),
+
   maxRetriesPerRequest: null,
   enableReadyCheck: true,
-  retryStrategy: (times) => Math.min(times * 200, 5000),
+
+  retryStrategy: (times) =>
+    Math.min(times * 200, 5000),
 });
 
 connection.on("error", (err) => {
-  console.error("🔌 Redis connection error:", err.message);
+  console.error(
+    "🔌 Redis connection error:",
+    err.message,
+  );
 });
 
 /*
- * Safely update logical PostgreSQL Job.
- */
-async function safeUpdateJob(jobId, data, context) {
+|--------------------------------------------------------------------------
+| Safe Job Update
+|--------------------------------------------------------------------------
+*/
+
+async function safeUpdateJob(
+  jobId,
+  data,
+  context,
+) {
   try {
     return await prisma.job.update({
       where: {
@@ -42,14 +70,16 @@ async function safeUpdateJob(jobId, data, context) {
   } catch (err) {
     if (err.code === "P2025") {
       console.warn(
-        `⚠️ Job ${jobId} no longer exists. Skipping DB update (${context}).`,
+        `⚠️ Job ${jobId} no longer exists.` +
+          ` Skipping DB update (${context}).`,
       );
 
       return null;
     }
 
     console.error(
-      `❌ DB update failed (${context}) for job ${jobId}:`,
+      `❌ DB update failed (${context})` +
+        ` for job ${jobId}:`,
       err.message,
     );
 
@@ -58,8 +88,11 @@ async function safeUpdateJob(jobId, data, context) {
 }
 
 /*
- * Check cancellation using logical Job ID.
- */
+|--------------------------------------------------------------------------
+| Cancellation
+|--------------------------------------------------------------------------
+*/
+
 async function isJobCanceled(logicalJobId) {
   const job = await prisma.job.findUnique({
     where: {
@@ -73,26 +106,34 @@ async function isJobCanceled(logicalJobId) {
   return job?.status === STATUS.CANCELED;
 }
 
-/*
- * Stop processing if logical job was canceled.
- */
 async function throwIfCanceled(logicalJobId) {
-  const canceled = await isJobCanceled(logicalJobId);
+  const canceled =
+    await isJobCanceled(logicalJobId);
 
   if (canceled) {
-    throw new UnrecoverableError("Job canceled by user");
+    throw new UnrecoverableError(
+      "Job canceled by user",
+    );
   }
 }
 
 /*
- * Simulated cancellable work.
- */
-async function cancellableDelay(logicalJobId, duration) {
+|--------------------------------------------------------------------------
+| Cancellable Work
+|--------------------------------------------------------------------------
+*/
+
+async function cancellableDelay(
+  logicalJobId,
+  duration,
+) {
   const interval = 500;
   let elapsed = 0;
 
   while (elapsed < duration) {
-    await new Promise((resolve) => setTimeout(resolve, interval));
+    await new Promise((resolve) =>
+      setTimeout(resolve, interval),
+    );
 
     elapsed += interval;
 
@@ -101,231 +142,294 @@ async function cancellableDelay(logicalJobId, duration) {
 }
 
 /*
- * Worker
- */
+|--------------------------------------------------------------------------
+| BullMQ Worker
+|--------------------------------------------------------------------------
+*/
+
 const worker = new Worker(
   QUEUE_NAME,
+
   async (job) => {
     const bullmqJobId = String(job.id);
-    const logicalJobId = job.data?.logicalJobId;
+    const logicalJobId =
+      job.data?.logicalJobId;
+
+    /*
+     * Track whether activeJobs was successfully
+     * incremented.
+     *
+     * This prevents activeJobs from becoming
+     * negative if the increment itself fails.
+     */
+    let activeJobCounted = false;
 
     console.log(
       `📥 [${WORKER_ID}] Processing BullMQ execution ${bullmqJobId}`,
     );
 
-    /*
-     * logicalJobId MUST exist.
-     */
-    if (!logicalJobId) {
-      throw new UnrecoverableError(
-        `Missing logicalJobId in BullMQ job ${bullmqJobId}`,
+    try {
+      /*
+       * logicalJobId MUST exist.
+       */
+      if (!logicalJobId) {
+        throw new UnrecoverableError(
+          `Missing logicalJobId in BullMQ job ${bullmqJobId}`,
+        );
+      }
+
+      /*
+       * Increment active job count.
+       */
+      await incrementActiveJobs(WORKER_ID);
+
+      activeJobCounted = true;
+
+      console.log(
+        `📈 [${WORKER_ID}] activeJobs incremented`,
       );
-    }
 
-    console.log(
-      `🔗 logicalJobId=${logicalJobId}, bullmqJobId=${bullmqJobId}`,
-    );
-
-    /*
-     * Find logical PostgreSQL Job.
-     */
-    const dbJob = await prisma.job.findUnique({
-      where: {
-        jobId: logicalJobId,
-      },
-    });
-
-    if (!dbJob) {
-      throw new Error(
-        `Database job not found for logicalJobId ${logicalJobId}`,
+      console.log(
+        `🔗 logicalJobId=${logicalJobId},` +
+          ` bullmqJobId=${bullmqJobId}`,
       );
+
+      /*
+       * Find logical PostgreSQL Job.
+       */
+      const dbJob =
+        await prisma.job.findUnique({
+          where: {
+            jobId: logicalJobId,
+          },
+        });
+
+      if (!dbJob) {
+        throw new Error(
+          `Database job not found for logicalJobId ${logicalJobId}`,
+        );
+      }
+
+      /*
+       * Find the last logical attempt.
+       *
+       * This keeps attempt numbers continuous
+       * across different BullMQ executions.
+       */
+      const lastAttempt =
+        await prisma.jobAttempt.findFirst({
+          where: {
+            jobId: dbJob.id,
+          },
+          orderBy: {
+            attemptNumber: "desc",
+          },
+        });
+
+      const attemptNumber =
+        (lastAttempt?.attemptNumber ?? 0) + 1;
+
+      const attemptStartedAt = new Date();
+
+      /*
+       * Check cancellation before creating attempt.
+       */
+      await throwIfCanceled(logicalJobId);
+
+      /*
+       * Create JobAttempt.
+       */
+      const attempt =
+        await prisma.jobAttempt.create({
+          data: {
+            jobId: dbJob.id,
+            attemptNumber,
+            bullmqJobId,
+            workerId: WORKER_ID,
+            status: "active",
+            startedAt: attemptStartedAt,
+          },
+        });
+
+      const attemptId = attempt.id;
+
+      console.log(
+        `📝 [${WORKER_ID}] Created attempt ${attemptNumber}` +
+          ` for logical job ${logicalJobId}` +
+          ` / BullMQ ${bullmqJobId}`,
+      );
+
+      /*
+       * Mark logical Job ACTIVE.
+       */
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          status: STATUS.ACTIVE,
+          startedAt: attemptStartedAt,
+          attempts: attemptNumber,
+          bullmqJobId,
+        },
+        "start",
+      );
+
+      /*
+       * Check cancellation again.
+       */
+      await throwIfCanceled(logicalJobId);
+
+      /*
+       * Failure testing.
+       */
+      if (job.data?.shouldFail) {
+        throw new Error(
+          "Intentional test failure",
+        );
+      }
+
+      /*
+       * Progress 25%.
+       */
+      await job.updateProgress(25);
+
+      await throwIfCanceled(logicalJobId);
+
+      /*
+       * Work.
+       */
+      await cancellableDelay(
+        logicalJobId,
+        5000,
+      );
+
+      /*
+       * Progress 50%.
+       */
+      await job.updateProgress(50);
+
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          progress: 50,
+        },
+        "progress-50",
+      );
+
+      await throwIfCanceled(logicalJobId);
+
+      /*
+       * More work.
+       */
+      await cancellableDelay(
+        logicalJobId,
+        1000,
+      );
+
+      /*
+       * Progress 75%.
+       */
+      await job.updateProgress(75);
+
+      await throwIfCanceled(logicalJobId);
+
+      /*
+       * More work.
+       */
+      await cancellableDelay(
+        logicalJobId,
+        1000,
+      );
+
+      /*
+       * Progress 100%.
+       */
+      await job.updateProgress(100);
+
+      /*
+       * Final cancellation check.
+       */
+      await throwIfCanceled(logicalJobId);
+
+      const result = {
+        success: true,
+        message:
+          "Job processed successfully",
+      };
+
+      const completedAt = new Date();
+
+      /*
+       * Complete logical Job.
+       */
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          status: STATUS.COMPLETED,
+          progress: 100,
+          result,
+          error: null,
+          completedAt,
+          failedAt: null,
+          isDeadLetter: false,
+          attempts: attemptNumber,
+          bullmqJobId,
+        },
+        "complete",
+      );
+
+      /*
+       * Resolve dependent jobs.
+       */
+      await resolveDependents(dbJob.id);
+
+      /*
+       * Complete JobAttempt.
+       */
+      const duration =
+        completedAt.getTime() -
+        attemptStartedAt.getTime();
+
+      await prisma.jobAttempt.update({
+        where: {
+          id: attemptId,
+        },
+        data: {
+          status: "completed",
+          completedAt,
+          duration,
+        },
+      });
+
+      console.log(
+        `✅ [${WORKER_ID}] Logical job ${logicalJobId}` +
+          ` completed via BullMQ ${bullmqJobId}` +
+          ` (attempt ${attemptNumber},` +
+          ` duration: ${duration}ms)`,
+      );
+
+      return result;
+    } finally {
+      /*
+       * ALWAYS decrement activeJobs
+       * if this execution successfully incremented it.
+       *
+       * Runs when:
+       * - job succeeds
+       * - job fails
+       * - job is canceled
+       * - exception occurs
+       * - BullMQ retries
+       */
+      if (activeJobCounted) {
+        await decrementActiveJobs(WORKER_ID);
+
+        console.log(
+          `📉 [${WORKER_ID}] activeJobs decremented`,
+        );
+      }
     }
-
-    /*
-     * Find the last attempt across ALL BullMQ executions.
-     *
-     * This is what makes:
-     *
-     * 1
-     * 2
-     * 3
-     * 4
-     *
-     * continuous even when BullMQ execution changes.
-     */
-    const lastAttempt = await prisma.jobAttempt.findFirst({
-      where: {
-        jobId: dbJob.id,
-      },
-      orderBy: {
-        attemptNumber: "desc",
-      },
-    });
-
-    const attemptNumber = (lastAttempt?.attemptNumber ?? 0) + 1;
-
-    const attemptStartedAt = new Date();
-
-    /*
-     * Check cancellation before creating attempt.
-     */
-    await throwIfCanceled(logicalJobId);
-
-    /*
-     * Create JobAttempt.
-     */
-    const attempt = await prisma.jobAttempt.create({
-      data: {
-        jobId: dbJob.id,
-        attemptNumber,
-        bullmqJobId,
-        workerId: WORKER_ID,
-        status: "active",
-        startedAt: attemptStartedAt,
-      },
-    });
-
-    const attemptId = attempt.id;
-
-    console.log(
-      `📝 [${WORKER_ID}] Created attempt ${attemptNumber}` +
-        ` for logical job ${logicalJobId}` +
-        ` / BullMQ ${bullmqJobId}`,
-    );
-
-    /*
-     * Mark logical Job ACTIVE.
-     */
-    await safeUpdateJob(
-      logicalJobId,
-      {
-        status: STATUS.ACTIVE,
-        startedAt: attemptStartedAt,
-        attempts: attemptNumber,
-        bullmqJobId,
-      },
-      "start",
-    );
-
-    /*
-     * Check cancellation again.
-     */
-    await throwIfCanceled(logicalJobId);
-
-    /*
-     * Failure testing.
-     */
-    if (job.data?.shouldFail) {
-      throw new Error("Intentional test failure");
-    }
-
-    /*
-     * Progress 25%.
-     */
-    await job.updateProgress(25);
-
-    await throwIfCanceled(logicalJobId);
-
-    /*
-     * Work.
-     */
-    await cancellableDelay(logicalJobId, 5000);
-
-    /*
-     * Progress 50%.
-     */
-    await job.updateProgress(50);
-
-    await safeUpdateJob(
-      logicalJobId,
-      {
-        progress: 50,
-      },
-      "progress-50",
-    );
-
-    await throwIfCanceled(logicalJobId);
-
-    /*
-     * More work.
-     */
-    await cancellableDelay(logicalJobId, 1000);
-
-    /*
-     * Progress 75%.
-     */
-    await job.updateProgress(75);
-
-    await throwIfCanceled(logicalJobId);
-
-    /*
-     * More work.
-     */
-    await cancellableDelay(logicalJobId, 1000);
-
-    /*
-     * Progress 100%.
-     */
-    await job.updateProgress(100);
-
-    /*
-     * Final cancellation check.
-     */
-    await throwIfCanceled(logicalJobId);
-
-    const result = {
-      success: true,
-      message: "Job processed successfully",
-    };
-
-    const completedAt = new Date();
-
-    /*
-     * Complete logical Job.
-     */
-    await safeUpdateJob(
-      logicalJobId,
-      {
-        status: STATUS.COMPLETED,
-        progress: 100,
-        result,
-        error: null,
-        completedAt,
-        failedAt: null,
-        isDeadLetter: false,
-        attempts: attemptNumber,
-        bullmqJobId,
-      },
-      "complete",
-    );
-
-    await resolveDependents(dbJob.id);
-
-    /*
-     * Complete JobAttempt.
-     */
-    const duration =
-      completedAt.getTime() - attemptStartedAt.getTime();
-
-    await prisma.jobAttempt.update({
-      where: {
-        id: attemptId,
-      },
-      data: {
-        status: "completed",
-        completedAt,
-        duration,
-      },
-    });
-
-    console.log(
-      `✅ [${WORKER_ID}] Logical job ${logicalJobId} completed` +
-        ` via BullMQ ${bullmqJobId}` +
-        ` (attempt ${attemptNumber}, duration: ${duration}ms)`,
-    );
-
-    return result;
   },
+
   {
     connection,
     concurrency: CONCURRENCY,
@@ -334,91 +438,207 @@ const worker = new Worker(
 );
 
 /*
- * Handle failed jobs.
- */
-worker.on("failed", async (job, error) => {
-  if (!job) return;
+|--------------------------------------------------------------------------
+| Failed Event
+|--------------------------------------------------------------------------
+*/
 
-  const logicalJobId = job.data?.logicalJobId;
-  const bullmqJobId = String(job.id);
+worker.on(
+  "failed",
+  async (job, error) => {
+    if (!job) return;
 
-  if (!logicalJobId) {
+    const logicalJobId =
+      job.data?.logicalJobId;
+
+    const bullmqJobId = String(job.id);
+
+    if (!logicalJobId) {
+      console.error(
+        `❌ BullMQ job ${bullmqJobId}` +
+          ` has no logicalJobId`,
+      );
+
+      return;
+    }
+
     console.error(
-      `❌ BullMQ job ${bullmqJobId} has no logicalJobId`,
+      `❌ [${WORKER_ID}] Logical job ${logicalJobId}` +
+        ` / BullMQ ${bullmqJobId} failed`,
     );
 
-    return;
-  }
-
-  console.error(
-    `❌ [${WORKER_ID}] Logical job ${logicalJobId}` +
-      ` / BullMQ ${bullmqJobId} failed`,
-  );
-
-  console.error("❌ Error:", error.message);
-
-  /*
-   * Find the JobAttempt created by THIS BullMQ execution.
-   *
-   * This is important because attemptNumber from the processor
-   * function is not available inside this event handler.
-   */
-  let currentAttempt = null;
-
-  try {
-    currentAttempt = await prisma.jobAttempt.findFirst({
-      where: {
-        bullmqJobId,
-        status: "active",
-      },
-      orderBy: {
-        createdAt: "desc",
-      },
-    });
+    console.error(
+      "❌ Error:",
+      error.message,
+    );
 
     /*
-     * If no active attempt exists, find the most recent attempt
-     * for this BullMQ execution.
+     * Find JobAttempt created by this
+     * BullMQ execution.
      */
-    if (!currentAttempt) {
-      currentAttempt = await prisma.jobAttempt.findFirst({
-        where: {
-          bullmqJobId,
-        },
-        orderBy: {
-          createdAt: "desc",
-        },
-      });
+    let currentAttempt = null;
+
+    try {
+      currentAttempt =
+        await prisma.jobAttempt.findFirst({
+          where: {
+            bullmqJobId,
+            status: "active",
+          },
+          orderBy: {
+            createdAt: "desc",
+          },
+        });
+
+      if (!currentAttempt) {
+        currentAttempt =
+          await prisma.jobAttempt.findFirst({
+            where: {
+              bullmqJobId,
+            },
+            orderBy: {
+              createdAt: "desc",
+            },
+          });
+      }
+    } catch (err) {
+      console.error(
+        `❌ Failed to find JobAttempt for BullMQ ${bullmqJobId}:`,
+        err.message,
+      );
     }
-  } catch (err) {
+
+    const logicalAttemptNumber =
+      currentAttempt?.attemptNumber ?? null;
+
+    /*
+     * Cancellation is not retryable.
+     */
+    if (
+      error instanceof UnrecoverableError
+    ) {
+      console.log(
+        `🛑 [${WORKER_ID}] Logical job ${logicalJobId}` +
+          ` was canceled`,
+      );
+
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          status: STATUS.CANCELED,
+          isDeadLetter: false,
+          error: "Job canceled by user",
+        },
+        "canceled",
+      );
+
+      try {
+        if (currentAttempt) {
+          await prisma.jobAttempt.update({
+            where: {
+              id: currentAttempt.id,
+            },
+            data: {
+              status: "canceled",
+              completedAt: new Date(),
+              error: "Job canceled by user",
+            },
+          });
+
+          console.log(
+            `📝 [${WORKER_ID}] Attempt` +
+              ` ${currentAttempt.attemptNumber}` +
+              ` marked canceled`,
+          );
+        }
+      } catch (attemptError) {
+        console.error(
+          `❌ Failed to update canceled JobAttempt:`,
+          attemptError.message,
+        );
+      }
+
+      return;
+    }
+
+    /*
+     * Normal failure / retry.
+     *
+     * BullMQ attemptsMade is zero-based:
+     *
+     * 0 → attempt 1
+     * 1 → attempt 2
+     * 2 → attempt 3
+     */
+    const maxAttempts =
+      job.opts.attempts || 1;
+
+    const attemptsMade =
+      job.attemptsMade || 0;
+
+    const isFinalAttempt =
+      attemptsMade >= maxAttempts;
+
+    const currentAttemptNumber =
+      logicalAttemptNumber ??
+      attemptsMade + 1;
+
     console.error(
-      `❌ Failed to find JobAttempt for BullMQ ${bullmqJobId}:`,
-      err.message,
-    );
-  }
-
-  const logicalAttemptNumber = currentAttempt?.attemptNumber ?? null;
-
-  /*
-   * CANCELLATION
-   *
-   * Cancellation is NOT a retryable failure.
-   */
-  if (error instanceof UnrecoverableError) {
-    console.log(
-      `🛑 [${WORKER_ID}] Logical job ${logicalJobId} was canceled`,
+      `📊 Logical attempt: ${currentAttemptNumber}` +
+        ` | BullMQ attempt: ${attemptsMade + 1}/${maxAttempts}` +
+        ` | final=${isFinalAttempt}`,
     );
 
+    /*
+     * Update logical PostgreSQL Job.
+     */
     await safeUpdateJob(
       logicalJobId,
-      {
-        status: STATUS.CANCELED,
-        isDeadLetter: false,
-        error: "Job canceled by user",
-      },
-      "canceled",
+      isFinalAttempt
+        ? {
+            status: STATUS.FAILED,
+            isDeadLetter: true,
+            attempts: currentAttemptNumber,
+            error: error.message,
+            failedAt: new Date(),
+          }
+        : {
+            status: STATUS.RETRYING,
+            isDeadLetter: false,
+            attempts: currentAttemptNumber,
+            error: error.message,
+          },
+      "failed",
     );
 
+    /*
+     * Final failure → resolve dependents.
+     */
+    if (isFinalAttempt) {
+      const failedDbJob =
+        await prisma.job.findUnique({
+          where: {
+            jobId: logicalJobId,
+          },
+          select: {
+            id: true,
+          },
+        });
+
+      if (failedDbJob) {
+        console.log(
+          `🔗 Resolving dependents of failed job ${logicalJobId}`,
+        );
+
+        await resolveDependents(
+          failedDbJob.id,
+        );
+      }
+    }
+
+    /*
+     * Update JobAttempt.
+     */
     try {
       if (currentAttempt) {
         await prisma.jobAttempt.update({
@@ -426,172 +646,214 @@ worker.on("failed", async (job, error) => {
             id: currentAttempt.id,
           },
           data: {
-            status: "canceled",
+            status: "failed",
             completedAt: new Date(),
-            error: "Job canceled by user",
+            error: error.message,
           },
         });
 
         console.log(
-          `📝 [${WORKER_ID}] Attempt ${currentAttempt.attemptNumber}` +
-            ` marked canceled`,
+          `📝 [${WORKER_ID}] Attempt` +
+            ` ${currentAttempt.attemptNumber}` +
+            ` for logical job ${logicalJobId}` +
+            ` marked failed`,
+        );
+      } else {
+        console.warn(
+          `⚠️ No JobAttempt found for BullMQ ${bullmqJobId}`,
         );
       }
     } catch (attemptError) {
       console.error(
-        `❌ Failed to update canceled JobAttempt:`,
+        `❌ Failed to update JobAttempt` +
+          ` for logical job ${logicalJobId}:`,
         attemptError.message,
       );
     }
 
-    return;
-  }
-
-  /*
-   * NORMAL FAILURE / RETRY
-   *
-   * BullMQ attemptsMade is zero-based:
-   *
-   * attemptsMade = 0 → actual attempt 1
-   * attemptsMade = 1 → actual attempt 2
-   * attemptsMade = 2 → actual attempt 3
-   */
-  const maxAttempts = job.opts.attempts || 1;
-  const attemptsMade = job.attemptsMade || 0;
-
-  const isFinalAttempt =
-    attemptsMade >= maxAttempts ;
-
-  const currentAttemptNumber =
-    logicalAttemptNumber ?? attemptsMade ;
-
-  console.error(
-    `❌ [${WORKER_ID}] BullMQ ${bullmqJobId}` +
-      ` failed`,
-  );
-
-  console.error(
-    `📊 Logical attempt: ${currentAttemptNumber}` +
-      ` | BullMQ attempt: ${attemptsMade + 1}/${maxAttempts}` +
-      ` | final=${isFinalAttempt}`,
-  );
-
-  /*
-   * Update logical PostgreSQL Job.
-   */
-  await safeUpdateJob(
-    logicalJobId,
-    isFinalAttempt
-      ? {
-          status: STATUS.FAILED,
-          isDeadLetter: true,
-          attempts: currentAttemptNumber,
-          error: error.message,
-          failedAt: new Date(),
-        }
-      : {
-          status: STATUS.RETRYING,
-          isDeadLetter: false,
-          attempts: currentAttemptNumber,
-          error: error.message,
-        },
-    "failed",
-  );
-    
-  if (isFinalAttempt) {
-  const failedDbJob = await prisma.job.findUnique({
-    where: {
-      jobId: logicalJobId,
-    },
-    select: {
-      id: true,
-    },
-  });
-
-  if (failedDbJob) {
-    console.log(
-      `🔗 Resolving dependents of failed job ${logicalJobId}`,
-    );
-
-    await resolveDependents(failedDbJob.id);
-  }
-}
-  /*
-   * Update current JobAttempt.
-   */
-  try {
-    if (currentAttempt) {
-      await prisma.jobAttempt.update({
-        where: {
-          id: currentAttempt.id,
-        },
-        data: {
-          status: "failed",
-          completedAt: new Date(),
-          error: error.message,
-        },
-      });
-
+    /*
+     * Final logging.
+     */
+    if (isFinalAttempt) {
       console.log(
-        `📝 [${WORKER_ID}] Attempt ${currentAttempt.attemptNumber}` +
-          ` for logical job ${logicalJobId} marked failed`,
+        `💀 [${WORKER_ID}] Logical job ${logicalJobId}` +
+          ` permanently failed and moved to DLQ`,
       );
     } else {
-      console.warn(
-        `⚠️ No JobAttempt found for BullMQ ${bullmqJobId}`,
+      console.log(
+        `🔄 [${WORKER_ID}] Logical job ${logicalJobId}` +
+          ` will retry automatically`,
       );
     }
-  } catch (attemptError) {
-    console.error(
-      `❌ Failed to update JobAttempt for logical job ${logicalJobId}:`,
-      attemptError.message,
-    );
-  }
-
-  /*
-   * Final logging.
-   */
-  if (isFinalAttempt) {
-    console.log(
-      `💀 [${WORKER_ID}] Logical job ${logicalJobId}` +
-        ` permanently failed and moved to DLQ`,
-    );
-  } else {
-    console.log(
-      `🔄 [${WORKER_ID}] Logical job ${logicalJobId}` +
-        ` will retry automatically`,
-    );
-  }
-});
-
-console.log(
-  `🚀 Starting ${WORKER_ID} with concurrency ${CONCURRENCY}`,
+  },
 );
 
 /*
- * Graceful shutdown.
- */
-async function shutdown(signal) {
-  console.log(
-    `\n${signal} received, shutting down worker gracefully...`,
-  );
+|--------------------------------------------------------------------------
+| Worker Health Registration
+|--------------------------------------------------------------------------
+*/
 
+async function startWorkerHealth() {
   try {
-    await worker.close();
-    await connection.quit();
-    await prisma.$disconnect();
+    await registerWorker({
+      workerId: WORKER_ID,
+      concurrency: CONCURRENCY,
+    });
 
-    console.log("Worker shut down cleanly.");
+    heartbeatTimer = startHeartbeat(WORKER_ID);
 
-    process.exit(0);
-  } catch (err) {
-    console.error("Error during shutdown:", err);
+    console.log(
+      `💚 [${WORKER_ID}] Worker health monitoring started`,
+    );
+  } catch (error) {
+    console.error(
+      `❌ Failed to register worker ${WORKER_ID}:`,
+      error.message,
+    );
 
-    process.exit(1);
+    throw error;
   }
 }
 
-process.on("SIGTERM", () => shutdown("SIGTERM"));
-process.on("SIGINT", () => shutdown("SIGINT"));
+/*
+|--------------------------------------------------------------------------
+| Startup
+|--------------------------------------------------------------------------
+*/
 
+console.log(
+  `🚀 Starting ${WORKER_ID}` +
+    ` with concurrency ${CONCURRENCY}`,
+);
+
+await startWorkerHealth();
+
+let isShuttingDown = false;
+
+async function shutdown(signal) {
+  if (isShuttingDown) {
+    console.log(
+      `⚠️ ${signal} received again. Shutdown already running.`,
+    );
+
+    return;
+  }
+
+  isShuttingDown = true;
+
+  console.log(
+    `\n🛑 ${signal} received, shutting down worker gracefully...`,
+  );
+
+  /*
+   * Keep the Node.js event loop alive while
+   * asynchronous shutdown operations execute.
+   */
+  const keepAlive = setInterval(() => {}, 1000);
+
+  try {
+    /*
+     * STEP 1
+     *
+     * Stop heartbeat and update PostgreSQL.
+     */
+    if (heartbeatTimer) {
+      console.log(
+        `🛑 [${WORKER_ID}] Marking worker STOPPED in DB...`,
+      );
+
+      await stopHeartbeat({
+        workerId: WORKER_ID,
+        timer: heartbeatTimer,
+      });
+
+      heartbeatTimer = null;
+
+      console.log(
+        `✅ [${WORKER_ID}] Worker is STOPPED in DB`,
+      );
+    }
+
+    /*
+     * STEP 2
+     *
+     * Close BullMQ.
+     *
+     * This waits for currently running jobs
+     * to finish.
+     */
+    console.log(
+      `🔒 [${WORKER_ID}] Closing BullMQ worker...`,
+    );
+
+    await worker.close();
+
+    console.log(
+      `✅ [${WORKER_ID}] BullMQ worker closed`,
+    );
+
+    /*
+     * STEP 3
+     *
+     * Close Redis.
+     */
+    console.log(
+      `🔌 [${WORKER_ID}] Closing Redis...`,
+    );
+
+    await connection.quit();
+
+    console.log(
+      `✅ [${WORKER_ID}] Redis closed`,
+    );
+
+    /*
+     * STEP 4
+     *
+     * Disconnect Prisma.
+     */
+    console.log(
+      `🗄️ [${WORKER_ID}] Disconnecting Prisma...`,
+    );
+
+    await prisma.$disconnect();
+
+    console.log(
+      `✅ [${WORKER_ID}] Prisma disconnected`,
+    );
+
+    clearInterval(keepAlive);
+
+    console.log(
+      `✅ [${WORKER_ID}] Worker shut down cleanly.`,
+    );
+
+    /*
+     * Give stdout a moment to flush.
+     */
+    setTimeout(() => {
+      process.exit(0);
+    }, 100);
+  } catch (error) {
+    clearInterval(keepAlive);
+
+    console.error(
+      `❌ [${WORKER_ID}] Shutdown failed:`,
+      error,
+    );
+
+    setTimeout(() => {
+      process.exit(1);
+    }, 100);
+  }
+}
+
+process.once("SIGINT", () => {
+  void shutdown("SIGINT");
+});
+
+process.once("SIGTERM", () => {
+  void shutdown("SIGTERM");
+});
 export default worker;

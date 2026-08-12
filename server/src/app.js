@@ -9,6 +9,7 @@ import redisClient from './config/redis.js';
 import jobRoutes from './routes/jobRoutes.js';
 import dlqRoutes from './routes/dlqRoutes.js';
 import dependencyRoutes from "./routes/dependencyRoutes.js";
+import workerRoutes from "./routes/workerRoutes.js";
 const app =  express();
 
 app.use(cors());
@@ -24,6 +25,7 @@ app.get('/', (req,res) =>{
 app.use('/api/jobs', jobRoutes);
 app.use('/api/dlq', dlqRoutes);
 app.use("/api/dependencies", dependencyRoutes);
+app.use("/api/workers", workerRoutes);
 
 
 const PORT = process.env.PORT || 5000;
