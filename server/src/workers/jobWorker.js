@@ -4,6 +4,7 @@ import { Worker ,UnrecoverableError} from "bullmq";
 import prisma from "../config/prisma.js";
 
 const QUEUE_NAME = "taskflow-queue";
+const WORKER_ID = process.env.WORKER_ID || `worker-${process.pid}`;
 const CONCURRENCY = Number(process.env.WORKER_CONCURRENCY || 1);
 
 const STATUS = {
@@ -97,7 +98,7 @@ async function cancellableDelay(jobId, duration) {
 const worker = new Worker(
   QUEUE_NAME,
   async (job) => {
-    console.log(`📥 Processing job ${job.id}`);
+    console.log(`📥 [${WORKER_ID}] Processing job ${job.id}`);
 
     /*
      * Check immediately before doing anything.
@@ -200,7 +201,7 @@ const worker = new Worker(
       "complete"
     );
 
-    console.log(`✅ Job ${job.id} completed successfully`);
+    console.log(`✅ [${WORKER_ID}] Job ${job.id} completed successfully`);
 
     return result;
   },
@@ -225,7 +226,9 @@ worker.on("failed", async (job, error) => {
    * Do not put it in the DLQ.
    */
   if (error instanceof UnrecoverableError) {
-  console.log(`🛑 Job ${job.id} was canceled`);
+   console.log(
+      `🛑 [${WORKER_ID}] Job ${job.id} was canceled`
+    );
 
   await safeUpdateJob(
     job.id,
@@ -247,10 +250,9 @@ worker.on("failed", async (job, error) => {
   const attemptsMade = job.attemptsMade || 0;
   const isFinalAttempt = attemptsMade >= maxAttempts;
 
-  console.error(
-    `❌ Job ${job.id} failed on attempt ${attemptsMade}/${maxAttempts}`
-  );
-
+ console.error(
+  `❌ [${WORKER_ID}] Job ${job.id} failed on attempt ${attemptsMade}/${maxAttempts}`
+);
   await safeUpdateJob(
     job.id,
     isFinalAttempt
@@ -271,11 +273,15 @@ worker.on("failed", async (job, error) => {
   );
 
   console.log(
-    isFinalAttempt
-      ? `💀 Job ${job.id} permanently failed`
-      : `🔄 Job ${job.id} will retry (${attemptsMade}/${maxAttempts})`
-  );
+  isFinalAttempt
+    ? `💀 [${WORKER_ID}] Job ${job.id} permanently failed`
+    : `🔄 [${WORKER_ID}] Job ${job.id} will retry (${attemptsMade}/${maxAttempts})`
+);
 });
+
+console.log(
+  `🚀 Starting ${WORKER_ID} with concurrency ${CONCURRENCY}`
+);
 
 async function shutdown(signal) {
   console.log(`\n${signal} received, shutting down worker gracefully...`);
