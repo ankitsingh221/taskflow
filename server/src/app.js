@@ -10,6 +10,7 @@ import jobRoutes from './routes/jobRoutes.js';
 import dlqRoutes from './routes/dlqRoutes.js';
 import dependencyRoutes from "./routes/dependencyRoutes.js";
 import workerRoutes from "./routes/workerRoutes.js";
+import metricsRoutes from "./routes/metricsRoutes.js";
 const app =  express();
 
 app.use(cors());
@@ -27,6 +28,10 @@ app.use('/api/dlq', dlqRoutes);
 app.use("/api/dependencies", dependencyRoutes);
 app.use("/api/workers", workerRoutes);
 
+app.use(
+  "/api/metrics",
+  metricsRoutes
+);
 
 const PORT = process.env.PORT || 5000;
 
