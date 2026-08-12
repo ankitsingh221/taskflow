@@ -8,16 +8,16 @@ datasource db {
 }
 
 model Job {
-  id       Int     @id @default(autoincrement())
-  jobId    String  @unique
-  name     String
+  id          Int     @id @default(autoincrement())
+  jobId       String  @unique
+  name        String
   bullmqJobId String?
-  status   String
-  priority Int     @default(1)
-  progress Int     @default(0)
-  payload  Json?
-  result   Json?
-  error    String?
+  status      String
+  priority    Int     @default(1)
+  progress    Int     @default(0)
+  payload     Json?
+  result      Json?
+  error       String?
 
   attempts    Int @default(0)
   maxAttempts Int @default(3)
@@ -31,6 +31,10 @@ model Job {
   failedAt    DateTime?
 
   attempts_history JobAttempt[]
+
+  dependencies JobDependency[] @relation("JobDependencies")
+
+  dependents JobDependency[] @relation("JobDependents")
 
   @@map("jobs")
 }
@@ -59,4 +63,19 @@ model JobAttempt {
 
   @@index([jobId])
   @@index([bullmqJobId])
+}
+
+model JobDependency {
+  id Int @id @default(autoincrement())
+
+  jobId          Int
+  dependsOnJobId Int
+
+  job Job @relation("JobDependencies", fields: [jobId], references: [id], onDelete: Cascade)
+
+  dependsOn Job @relation("JobDependents", fields: [dependsOnJobId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([jobId, dependsOnJobId])
 }

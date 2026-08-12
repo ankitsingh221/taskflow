@@ -2,6 +2,7 @@ import "dotenv/config";
 import IORedis from "ioredis";
 import { Worker, UnrecoverableError } from "bullmq";
 import prisma from "../config/prisma.js";
+import { resolveDependents } from "../services/dependencyService.js";
 
 const QUEUE_NAME = "taskflow-queue";
 const WORKER_ID = process.env.WORKER_ID || `worker-${process.pid}`;
@@ -297,6 +298,8 @@ const worker = new Worker(
       },
       "complete",
     );
+
+    await resolveDependents(dbJob.id);
 
     /*
      * Complete JobAttempt.

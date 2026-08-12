@@ -10,6 +10,7 @@ const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || 100);
 const STATUS = {
   WAITING: "waiting",
   SCHEDULED: "scheduled",
+  BLOCKED : "blocked",
   ACTIVE: "active",
   COMPLETED: "completed",
   FAILED: "failed",
@@ -27,9 +28,12 @@ export const createJob = async (req, res) => {
       data,
       priority = 1,
       delay = 0,
+      dependsOn = [],
     } = req.body;
 
+    // -----------------------------------------
     // Validate job name
+    // -----------------------------------------
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -37,7 +41,9 @@ export const createJob = async (req, res) => {
       });
     }
 
+    // -----------------------------------------
     // Validate priority
+    // -----------------------------------------
     if (
       !Number.isInteger(priority) ||
       priority < 1 ||
@@ -45,21 +51,20 @@ export const createJob = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message:
-          "Priority must be an integer between 1 and 10",
+        message: "Priority must be an integer between 1 and 10",
       });
     }
 
+    // -----------------------------------------
     // Validate delay
+    // -----------------------------------------
     if (!Number.isInteger(delay) || delay < 0) {
       return res.status(400).json({
         success: false,
-        message:
-          "Delay must be a non-negative integer",
+        message: "Delay must be a non-negative integer",
       });
     }
 
-    // Maximum delay = 7 days
     if (delay > MAX_DELAY) {
       return res.status(400).json({
         success: false,
@@ -67,10 +72,43 @@ export const createJob = async (req, res) => {
       });
     }
 
-    const waitingCount =
-      await jobQueue.getWaitingCount();
+    // -----------------------------------------
+    // Validate dependsOn
+    // -----------------------------------------
+    if (!Array.isArray(dependsOn)) {
+      return res.status(400).json({
+        success: false,
+        message: "dependsOn must be an array",
+      });
+    }
 
-    if (waitingCount >= MAX_QUEUE_SIZE) {
+    // Convert dependency IDs to strings
+    const dependencyIds = dependsOn.map(String);
+
+    // -----------------------------------------
+    // Prevent duplicate dependencies
+    // -----------------------------------------
+    const uniqueDependencies = [
+      ...new Set(dependencyIds),
+    ];
+
+    if (
+      uniqueDependencies.length !== dependencyIds.length
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate dependencies are not allowed",
+      });
+    }
+
+    // -----------------------------------------
+    // Queue capacity check
+    // -----------------------------------------
+    const waitingCount = await jobQueue.getWaitingCount();
+
+    if (
+      waitingCount >= MAX_QUEUE_SIZE
+    ) {
       return res.status(429).json({
         success: false,
         message:
@@ -82,91 +120,180 @@ export const createJob = async (req, res) => {
       });
     }
 
+    // -----------------------------------------
+    // Find dependency jobs
+    // -----------------------------------------
+    const dependencyJobs = [];
+
+    for (const dependencyJobId of uniqueDependencies) {
+      const dependencyJob =
+        await prisma.job.findUnique({
+          where: {
+            jobId: dependencyJobId,
+          },
+        });
+
+      if (!dependencyJob) {
+        return res.status(400).json({
+          success: false,
+          message:
+            `Dependency job ${dependencyJobId} not found`,
+        });
+      }
+
+      dependencyJobs.push(dependencyJob);
+    }
+
+    // -----------------------------------------
+    // Determine dependency state
+    // -----------------------------------------
+    const hasDependencies =
+      uniqueDependencies.length > 0;
+
+    const allDependenciesCompleted =
+      hasDependencies &&
+      dependencyJobs.every(
+        (dependency) =>
+          dependency.status === STATUS.COMPLETED
+      );
+
+    // -----------------------------------------
+    // Determine whether job can enter BullMQ
+    // -----------------------------------------
+    const canStart =
+      !hasDependencies ||
+      allDependenciesCompleted;
+
+    // -----------------------------------------
+    // Generate logical job ID
+    // -----------------------------------------
+    const logicalJobId =
+      crypto.randomUUID();
+
     const scheduledAt =
-      delay > 0
+      canStart && delay > 0
         ? new Date(Date.now() + delay)
         : null;
 
-    /*
-     * Logical Job ID
-     *
-     * This ID never changes, even when
-     * the job is manually retried from DLQ.
-     */
-    const logicalJobId = crypto.randomUUID();
+    const initialStatus = !canStart
+      ? STATUS.BLOCKED
+      : delay > 0
+        ? STATUS.SCHEDULED
+        : STATUS.WAITING;
 
-    console.log("Adding job to queue...");
-    console.log("Logical Job ID:", logicalJobId);
-    console.log("Name:", name);
-    console.log("Data:", data);
-    console.log("Priority:", priority);
-    console.log("Delay:", delay);
-
-    /*
-     * Create BullMQ execution.
-     *
-     * BullMQ generates its own execution ID.
-     */
-    const job = await jobQueue.add(
-      name,
-      {
-        ...(data || {}),
-        logicalJobId,
-      },
-      {
-        priority,
-        delay,
-        attempts: 3,
-        backoff: {
-          type: "exponential",
-          delay: 2000,
-        },
-        removeOnComplete: true,
-        removeOnFail: false,
-      }
-    );
-
-    console.log(
-      "BullMQ Execution ID:",
-      job.id
-    );
-
-    /*
-     * Store logical Job in PostgreSQL.
-     */
+    // -----------------------------------------
+    // Create PostgreSQL logical Job
+    // -----------------------------------------
     const dbJob = await prisma.job.create({
       data: {
         jobId: logicalJobId,
-        bullmqJobId: String(job.id),
 
-        name: job.name,
-        status:
-          delay > 0
-            ? STATUS.SCHEDULED
-            : STATUS.WAITING,
+        // No BullMQ execution yet
+        bullmqJobId: null,
+
+        name,
+        status: initialStatus,
 
         priority,
         progress: 0,
+
         payload: data || {},
+
         scheduledAt,
+
+        attempts: 0,
+        isDeadLetter: false,
       },
     });
 
+    // -----------------------------------------
+    // Create dependency records
+    // -----------------------------------------
+    if (hasDependencies) {
+      await prisma.jobDependency.createMany({
+        data: dependencyJobs.map(
+          (dependencyJob) => ({
+            jobId: dbJob.id,
+            dependsOnJobId: dependencyJob.id,
+          })
+        ),
+      });
+    }
+
+    // -----------------------------------------
+    // If dependencies are satisfied,
+    // create BullMQ execution
+    // -----------------------------------------
+    let bullmqJob = null;
+
+    if (canStart) {
+      bullmqJob = await jobQueue.add(
+        name,
+        {
+          ...(data || {}),
+          logicalJobId,
+        },
+        {
+          priority,
+
+          delay,
+
+          attempts: 3,
+
+          backoff: {
+            type: "exponential",
+            delay: 2000,
+          },
+
+          removeOnComplete: true,
+          removeOnFail: false,
+        }
+      );
+
+      // -----------------------------------------
+      // Store BullMQ execution ID
+      // -----------------------------------------
+      await prisma.job.update({
+        where: {
+          id: dbJob.id,
+        },
+        data: {
+          bullmqJobId: String(bullmqJob.id),
+        },
+      });
+    }
+
+    // -----------------------------------------
+    // Response
+    // -----------------------------------------
     return res.status(201).json({
       success: true,
       message: "Job created successfully",
+
       job: {
         id: dbJob.id,
         jobId: dbJob.jobId,
+
+        bullmqJobId: bullmqJob
+          ? String(bullmqJob.id)
+          : null,
+
         name: dbJob.name,
-        status: dbJob.status,
+        status: initialStatus,
+
         priority: dbJob.priority,
-        scheduledAt: dbJob.scheduledAt,
+
+        scheduledAt,
+
+        dependsOn: uniqueDependencies,
       },
     });
+
   } catch (error) {
-    console.error("❌ Create job error:");
-    console.error(error);
+    console.error(
+      "❌ Create job error:",
+      error
+    );
 
     return res.status(500).json({
       success: false,
