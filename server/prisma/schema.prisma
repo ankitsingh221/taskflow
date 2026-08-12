@@ -12,6 +12,7 @@ model Job {
   jobId       String  @unique
   name        String
   bullmqJobId String?
+  idempotencyKey String? @unique
   status      String
   priority    Int     @default(1)
   progress    Int     @default(0)

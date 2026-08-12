@@ -1,4 +1,4 @@
-import crypto from "crypto"
+import crypto from "crypto";
 import jobQueue from "../queues/jobQueue.js";
 import { getJobById } from "../services/jobServices.js";
 import prisma from "../config/prisma.js";
@@ -11,7 +11,7 @@ const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || 100);
 const STATUS = {
   WAITING: "waiting",
   SCHEDULED: "scheduled",
-  BLOCKED : "blocked",
+  BLOCKED: "blocked",
   ACTIVE: "active",
   COMPLETED: "completed",
   FAILED: "failed",
@@ -32,7 +32,16 @@ export const createJob = async (req, res) => {
       dependsOn = [],
     } = req.body;
 
-    
+    // ============================================================
+    // 1. Read Idempotency-Key
+    // ============================================================
+
+    const idempotencyKey = req.get("Idempotency-Key");
+
+    // ============================================================
+    // 2. Validate basic fields
+    // ============================================================
+
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -40,7 +49,6 @@ export const createJob = async (req, res) => {
       });
     }
 
-  
     if (
       !Number.isInteger(priority) ||
       priority < 1 ||
@@ -52,7 +60,6 @@ export const createJob = async (req, res) => {
       });
     }
 
-   
     if (!Number.isInteger(delay) || delay < 0) {
       return res.status(400).json({
         success: false,
@@ -67,7 +74,62 @@ export const createJob = async (req, res) => {
       });
     }
 
- 
+    // ============================================================
+    // 3. Validate Idempotency-Key
+    // ============================================================
+
+    if (idempotencyKey && idempotencyKey.length > 255) {
+      return res.status(400).json({
+        success: false,
+        message: "Idempotency-Key cannot exceed 255 characters",
+      });
+    }
+
+    // ============================================================
+    // 4. Check existing idempotent request
+    // ============================================================
+
+    if (idempotencyKey) {
+      const existingJob = await prisma.job.findUnique({
+        where: {
+          idempotencyKey,
+        },
+      });
+
+      if (existingJob) {
+        // Same key but different job name
+        if (existingJob.name !== name) {
+          return res.status(409).json({
+            success: false,
+            message:
+              "Idempotency-Key already used for a different job",
+          });
+        }
+
+        // Same key = return original job
+        return res.status(200).json({
+          success: true,
+          message: "Job already exists",
+          idempotent: true,
+
+          job: {
+            id: existingJob.id,
+            jobId: existingJob.jobId,
+            bullmqJobId: existingJob.bullmqJobId,
+            name: existingJob.name,
+            status: existingJob.status,
+            priority: existingJob.priority,
+            progress: existingJob.progress,
+            scheduledAt: existingJob.scheduledAt,
+          },
+        });
+      }
+    }
+
+    // ============================================================
+    // 5. Validate dependencies
+    // ============================================================
+
     if (!Array.isArray(dependsOn)) {
       return res.status(400).json({
         success: false,
@@ -75,10 +137,8 @@ export const createJob = async (req, res) => {
       });
     }
 
-    
     const dependencyIds = dependsOn.map(String);
 
-  
     const uniqueDependencies = [
       ...new Set(dependencyIds),
     ];
@@ -92,51 +152,33 @@ export const createJob = async (req, res) => {
       });
     }
 
-
-    const waitingCount = await jobQueue.getWaitingCount();
-
-    if (
-      waitingCount >= MAX_QUEUE_SIZE
-    ) {
-      return res.status(429).json({
-        success: false,
-        message:
-          "Queue is currently full. Please try again later.",
-        queue: {
-          waiting: waitingCount,
-          limit: MAX_QUEUE_SIZE,
-        },
-      });
-    }
-
+    // ============================================================
+    // 6. Find dependency jobs
+    // ============================================================
 
     const dependencyJobs = [];
 
     for (const dependencyJobId of uniqueDependencies) {
-      const dependencyJob =
-        await prisma.job.findUnique({
-          where: {
-            jobId: dependencyJobId,
-          },
-        });
+      const dependencyJob = await prisma.job.findUnique({
+        where: {
+          jobId: dependencyJobId,
+        },
+      });
 
       if (!dependencyJob) {
         return res.status(400).json({
           success: false,
-          message:
-            `Dependency job ${dependencyJobId} not found`,
+          message: `Dependency job ${dependencyJobId} not found`,
         });
       }
-const cycleDetected = await wouldCreateCycle(
-    dependencyJob.id, // new job's DB id is NOT available yet
-    dependencyJob.id
-  );
+
       dependencyJobs.push(dependencyJob);
     }
 
-    // -----------------------------------------
-    // Determine dependency state
-    // -----------------------------------------
+    // ============================================================
+    // 7. Determine dependency state
+    // ============================================================
+
     const hasDependencies =
       uniqueDependencies.length > 0;
 
@@ -147,18 +189,43 @@ const cycleDetected = await wouldCreateCycle(
           dependency.status === STATUS.COMPLETED
       );
 
-    // -----------------------------------------
-    // Determine whether job can enter BullMQ
-    // -----------------------------------------
     const canStart =
       !hasDependencies ||
       allDependenciesCompleted;
 
-    // -----------------------------------------
-    // Generate logical job ID
-    // -----------------------------------------
-    const logicalJobId =
-      crypto.randomUUID();
+    // ============================================================
+    // 8. Queue capacity check
+    //
+    // Only check BullMQ capacity if this job will actually
+    // enter BullMQ now.
+    // ============================================================
+
+    if (canStart) {
+      const waitingCount =
+        await jobQueue.getWaitingCount();
+
+      if (waitingCount >= MAX_QUEUE_SIZE) {
+        return res.status(429).json({
+          success: false,
+          message:
+            "Queue is currently full. Please try again later.",
+          queue: {
+            waiting: waitingCount,
+            limit: MAX_QUEUE_SIZE,
+          },
+        });
+      }
+    }
+
+    // ============================================================
+    // 9. Generate logical Job ID
+    // ============================================================
+
+    const logicalJobId = crypto.randomUUID();
+
+    // ============================================================
+    // 10. Determine initial status
+    // ============================================================
 
     const scheduledAt =
       canStart && delay > 0
@@ -171,15 +238,20 @@ const cycleDetected = await wouldCreateCycle(
         ? STATUS.SCHEDULED
         : STATUS.WAITING;
 
-    // -----------------------------------------
-    // Create PostgreSQL logical Job
-    // -----------------------------------------
+    // ============================================================
+    // 11. Create PostgreSQL logical Job
+    // ============================================================
+
     const dbJob = await prisma.job.create({
       data: {
         jobId: logicalJobId,
 
-        // No BullMQ execution yet
+        // BullMQ execution doesn't exist yet
         bullmqJobId: null,
+
+        // Idempotency
+        idempotencyKey:
+          idempotencyKey || null,
 
         name,
         status: initialStatus,
@@ -196,9 +268,48 @@ const cycleDetected = await wouldCreateCycle(
       },
     });
 
-    // -----------------------------------------
-    // Create dependency records
-    // -----------------------------------------
+    // ============================================================
+    // 12. Circular dependency detection
+    //
+    // IMPORTANT:
+    //
+    // Now we finally have dbJob.id.
+    //
+    // We can safely ask:
+    //
+    // "If newJob depends on dependencyJob,
+    //  would that create a cycle?"
+    // ============================================================
+
+    for (const dependencyJob of dependencyJobs) {
+      const cycleDetected =
+        await wouldCreateCycle(
+          dbJob.id,
+          dependencyJob.id
+        );
+
+      if (cycleDetected) {
+        // Remove the logical job because we cannot keep
+        // an invalid circular dependency.
+        await prisma.job.delete({
+          where: {
+            id: dbJob.id,
+          },
+        });
+
+        return res.status(400).json({
+          success: false,
+          message:
+            "Circular dependency detected",
+          dependency: dependencyJob.jobId,
+        });
+      }
+    }
+
+    // ============================================================
+    // 13. Create dependency records
+    // ============================================================
+
     if (hasDependencies) {
       await prisma.jobDependency.createMany({
         data: dependencyJobs.map(
@@ -210,10 +321,10 @@ const cycleDetected = await wouldCreateCycle(
       });
     }
 
-    // -----------------------------------------
-    // If dependencies are satisfied,
-    // create BullMQ execution
-    // -----------------------------------------
+    // ============================================================
+    // 14. Add to BullMQ if dependencies are satisfied
+    // ============================================================
+
     let bullmqJob = null;
 
     if (canStart) {
@@ -240,28 +351,32 @@ const cycleDetected = await wouldCreateCycle(
         }
       );
 
-      // -----------------------------------------
-      // Store BullMQ execution ID
-      // -----------------------------------------
+      // ==========================================================
+      // 15. Store BullMQ execution ID
+      // ==========================================================
+
       await prisma.job.update({
         where: {
           id: dbJob.id,
         },
+
         data: {
           bullmqJobId: String(bullmqJob.id),
         },
       });
     }
 
-    // -----------------------------------------
-    // Response
-    // -----------------------------------------
+    // ============================================================
+    // 16. Response
+    // ============================================================
+
     return res.status(201).json({
       success: true,
       message: "Job created successfully",
 
       job: {
         id: dbJob.id,
+
         jobId: dbJob.jobId,
 
         bullmqJobId: bullmqJob
@@ -269,21 +384,89 @@ const cycleDetected = await wouldCreateCycle(
           : null,
 
         name: dbJob.name,
+
         status: initialStatus,
 
         priority: dbJob.priority,
 
+        progress: dbJob.progress,
+
         scheduledAt,
 
         dependsOn: uniqueDependencies,
+
+        idempotencyKey:
+          idempotencyKey || null,
       },
     });
-
   } catch (error) {
     console.error(
       "❌ Create job error:",
       error
     );
+
+    // ============================================================
+    // 17. Handle Idempotency race condition
+    //
+    // Two requests can arrive at exactly the same time.
+    //
+    // Both may pass findUnique().
+    //
+    // PostgreSQL UNIQUE constraint will allow only one.
+    // The other produces Prisma P2002.
+    // ============================================================
+
+    if (
+      error.code === "P2002" &&
+      idempotencyKey
+    ) {
+      try {
+        const existingJob =
+          await prisma.job.findUnique({
+            where: {
+              idempotencyKey,
+            },
+          });
+
+        if (existingJob) {
+          if (existingJob.name !== name) {
+            return res.status(409).json({
+              success: false,
+              message:
+                "Idempotency-Key already used for a different job",
+            });
+          }
+
+          return res.status(200).json({
+            success: true,
+            message: "Job already exists",
+            idempotent: true,
+
+            job: {
+              id: existingJob.id,
+              jobId: existingJob.jobId,
+              bullmqJobId:
+                existingJob.bullmqJobId,
+              name: existingJob.name,
+              status: existingJob.status,
+              priority: existingJob.priority,
+              progress: existingJob.progress,
+              scheduledAt:
+                existingJob.scheduledAt,
+            },
+          });
+        }
+      } catch (lookupError) {
+        console.error(
+          "❌ Failed to retrieve idempotent job:",
+          lookupError
+        );
+      }
+    }
+
+    // ============================================================
+    // 18. Generic error
+    // ============================================================
 
     return res.status(500).json({
       success: false,
@@ -373,21 +556,21 @@ export const cancelJob = async (req, res) => {
     /*
      * Get corresponding BullMQ job.
      */
-   if (!dbJob.bullmqJobId) {
-  return res.status(409).json({
-    success: false,
-    message: "Job has no active BullMQ execution",
-  });
-}
+    if (!dbJob.bullmqJobId) {
+      return res.status(409).json({
+        success: false,
+        message: "Job has no active BullMQ execution",
+      });
+    }
 
-const bullJob = await jobQueue.getJob(dbJob.bullmqJobId);
+    const bullJob = await jobQueue.getJob(dbJob.bullmqJobId);
 
-if (!bullJob) {
-  return res.status(409).json({
-    success: false,
-    message: "Job is no longer available in the queue",
-  });
-}
+    if (!bullJob) {
+      return res.status(409).json({
+        success: false,
+        message: "Job is no longer available in the queue",
+      });
+    }
     /*
      * Determine current BullMQ state.
      */
