@@ -57,4 +57,3 @@ export const retryDeadLetterJob = async (jobId) => {
 
   return newJob;
 };
-
