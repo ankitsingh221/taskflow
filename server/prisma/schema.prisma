@@ -11,6 +11,7 @@ model Job {
   id       Int     @id @default(autoincrement())
   jobId    String  @unique
   name     String
+  bullmqJobId String?
   status   String
   priority Int     @default(1)
   progress Int     @default(0)
@@ -18,14 +19,44 @@ model Job {
   result   Json?
   error    String?
 
-  attempts Int @default(0)
+  attempts    Int @default(0)
   maxAttempts Int @default(3)
 
-  isDeadLetter  Boolean @default(false)
+  isDeadLetter Boolean @default(false)
 
   createdAt   DateTime  @default(now())
   startedAt   DateTime?
   scheduledAt DateTime?
   completedAt DateTime?
   failedAt    DateTime?
+
+  attempts_history JobAttempt[]
+
+  @@map("jobs")
+}
+
+model JobAttempt {
+  id Int @id @default(autoincrement())
+
+  jobId Int
+
+  attemptNumber Int
+  bullmqJobId   String
+
+  workerId String
+
+  status String
+
+  startedAt   DateTime
+  completedAt DateTime?
+  duration    Int?
+
+  error String?
+
+  job Job @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([jobId])
+  @@index([bullmqJobId])
 }

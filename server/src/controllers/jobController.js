@@ -1,6 +1,8 @@
+import crypto from "crypto"
 import jobQueue from "../queues/jobQueue.js";
 import { getJobById } from "../services/jobServices.js";
 import prisma from "../config/prisma.js";
+import { getAttemptsByJobId } from "../services/attemptService.js";
 
 const MAX_DELAY = 7 * 24 * 60 * 60 * 1000;
 const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || 100);
@@ -20,7 +22,12 @@ const STATUS = {
  */
 export const createJob = async (req, res) => {
   try {
-    const { name, data, priority = 1, delay = 0 } = req.body;
+    const {
+      name,
+      data,
+      priority = 1,
+      delay = 0,
+    } = req.body;
 
     // Validate job name
     if (!name) {
@@ -31,10 +38,15 @@ export const createJob = async (req, res) => {
     }
 
     // Validate priority
-    if (!Number.isInteger(priority) || priority < 1 || priority > 10) {
+    if (
+      !Number.isInteger(priority) ||
+      priority < 1 ||
+      priority > 10
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Priority must be an integer between 1 and 10",
+        message:
+          "Priority must be an integer between 1 and 10",
       });
     }
 
@@ -42,7 +54,8 @@ export const createJob = async (req, res) => {
     if (!Number.isInteger(delay) || delay < 0) {
       return res.status(400).json({
         success: false,
-        message: "Delay must be a non-negative integer",
+        message:
+          "Delay must be a non-negative integer",
       });
     }
 
@@ -54,50 +67,84 @@ export const createJob = async (req, res) => {
       });
     }
 
-    
-    const waitingCount = await jobQueue.getWaitingCount();
-    
+    const waitingCount =
+      await jobQueue.getWaitingCount();
+
     if (waitingCount >= MAX_QUEUE_SIZE) {
       return res.status(429).json({
         success: false,
-        message: "Queue is currently full. Please try again later.",
+        message:
+          "Queue is currently full. Please try again later.",
         queue: {
           waiting: waitingCount,
           limit: MAX_QUEUE_SIZE,
         },
       });
     }
-    
-    const scheduledAt = delay > 0 ? new Date(Date.now() + delay) : null;
+
+    const scheduledAt =
+      delay > 0
+        ? new Date(Date.now() + delay)
+        : null;
+
+    /*
+     * Logical Job ID
+     *
+     * This ID never changes, even when
+     * the job is manually retried from DLQ.
+     */
+    const logicalJobId = crypto.randomUUID();
+
     console.log("Adding job to queue...");
+    console.log("Logical Job ID:", logicalJobId);
     console.log("Name:", name);
     console.log("Data:", data);
     console.log("Priority:", priority);
     console.log("Delay:", delay);
 
     /*
-     * Add job to BullMQ
+     * Create BullMQ execution.
+     *
+     * BullMQ generates its own execution ID.
      */
-    const job = await jobQueue.add(name, data || {}, {
-      priority,
-      delay,
-      attempts: 3,
-      backoff: {
-        type: "exponential",
-        delay: 2000,
+    const job = await jobQueue.add(
+      name,
+      {
+        ...(data || {}),
+        logicalJobId,
       },
-      removeOnComplete: true,
-      removeOnFail: false,
-    });
+      {
+        priority,
+        delay,
+        attempts: 3,
+        backoff: {
+          type: "exponential",
+          delay: 2000,
+        },
+        removeOnComplete: true,
+        removeOnFail: false,
+      }
+    );
+
+    console.log(
+      "BullMQ Execution ID:",
+      job.id
+    );
 
     /*
-     * Store logical job in PostgreSQL
+     * Store logical Job in PostgreSQL.
      */
     const dbJob = await prisma.job.create({
       data: {
-        jobId: job.id,
+        jobId: logicalJobId,
+        bullmqJobId: String(job.id),
+
         name: job.name,
-        status: delay > 0 ? STATUS.SCHEDULED : STATUS.WAITING,
+        status:
+          delay > 0
+            ? STATUS.SCHEDULED
+            : STATUS.WAITING,
+
         priority,
         progress: 0,
         payload: data || {},
@@ -209,15 +256,21 @@ export const cancelJob = async (req, res) => {
     /*
      * Get corresponding BullMQ job.
      */
-    const bullJob = await jobQueue.getJob(id);
+   if (!dbJob.bullmqJobId) {
+  return res.status(409).json({
+    success: false,
+    message: "Job has no active BullMQ execution",
+  });
+}
 
-    if (!bullJob) {
-      return res.status(409).json({
-        success: false,
-        message: "Job is no longer available in the queue",
-      });
-    }
+const bullJob = await jobQueue.getJob(dbJob.bullmqJobId);
 
+if (!bullJob) {
+  return res.status(409).json({
+    success: false,
+    message: "Job is no longer available in the queue",
+  });
+}
     /*
      * Determine current BullMQ state.
      */
@@ -324,6 +377,34 @@ export const cancelJob = async (req, res) => {
       success: false,
       message: "Failed to cancel job",
       error: error.message,
+    });
+  }
+};
+
+export const getJobAttempts = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const attempts = await getAttemptsByJobId(id);
+
+    return res.status(200).json({
+      success: true,
+      jobId: id,
+      attempts,
+    });
+  } catch (error) {
+    console.error("❌ Get job attempts error:", error);
+
+    if (error.message === "Job not found") {
+      return res.status(404).json({
+        success: false,
+        message: "Job not found",
+      });
+    }
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to get job attempts",
     });
   }
 };

@@ -1,15 +1,25 @@
 import express from "express";
+
 import {
   createJob,
   getJobStatus,
+  getJobAttempts,
   cancelJob,
 } from "../controllers/jobController.js";
 
 import jobCreationRateLimiter from "../middleware/rateLimiter.js";
+
 const router = express.Router();
 
-router.post("/",jobCreationRateLimiter, createJob);
+router.post(
+  "/",
+  jobCreationRateLimiter,
+  createJob
+);
+
 router.get("/:id", getJobStatus);
+
+router.get("/:id/attempts", getJobAttempts);
 
 // Cancel a job
 router.post("/:id/cancel", cancelJob);

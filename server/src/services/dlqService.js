@@ -27,9 +27,27 @@ export const retryDeadLetterJob = async (jobId) => {
     throw new Error("Job is not in dead letter queue");
   }
 
+  /*
+   * Create a NEW BullMQ execution.
+   *
+   * IMPORTANT:
+   * The PostgreSQL logical jobId stays the same.
+   *
+   * Example:
+   *
+   * PostgreSQL logical jobId = ABC
+   * Old BullMQ execution      = 74
+   * New BullMQ execution      = 75
+   *
+   * The new BullMQ job receives ABC
+   * through job.data.logicalJobId.
+   */
   const newJob = await jobQueue.add(
     dbJob.name,
-    dbJob.payload || {},
+    {
+      ...(dbJob.payload || {}),
+      logicalJobId: dbJob.jobId,
+    },
     {
       attempts: dbJob.maxAttempts,
       backoff: {
@@ -41,19 +59,38 @@ export const retryDeadLetterJob = async (jobId) => {
     }
   );
 
+  /*
+   * Update the SAME logical PostgreSQL Job.
+   *
+   * We do NOT create another Job row.
+   */
   await prisma.job.update({
     where: {
       jobId,
     },
     data: {
+      bullmqJobId: String(newJob.id),
+
       status: "retrying",
+
       isDeadLetter: false,
+
       error: null,
+
       progress: 0,
-      attempts: 0,
+
+     
       failedAt: null,
+
+      startedAt: null,
+      completedAt: null,
     },
   });
+
+  console.log(
+    `🔄 DLQ retry: logicalJobId=${dbJob.jobId}, ` +
+      `new BullMQ execution=${newJob.id}`
+  );
 
   return newJob;
 };
