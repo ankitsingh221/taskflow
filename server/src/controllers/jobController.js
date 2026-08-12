@@ -3,6 +3,7 @@ import jobQueue from "../queues/jobQueue.js";
 import { getJobById } from "../services/jobServices.js";
 import prisma from "../config/prisma.js";
 import { getAttemptsByJobId } from "../services/attemptService.js";
+import { wouldCreateCycle } from "../services/dependencyService.js";
 
 const MAX_DELAY = 7 * 24 * 60 * 60 * 1000;
 const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || 100);
@@ -31,9 +32,7 @@ export const createJob = async (req, res) => {
       dependsOn = [],
     } = req.body;
 
-    // -----------------------------------------
-    // Validate job name
-    // -----------------------------------------
+    
     if (!name) {
       return res.status(400).json({
         success: false,
@@ -41,9 +40,7 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // Validate priority
-    // -----------------------------------------
+  
     if (
       !Number.isInteger(priority) ||
       priority < 1 ||
@@ -55,9 +52,7 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // Validate delay
-    // -----------------------------------------
+   
     if (!Number.isInteger(delay) || delay < 0) {
       return res.status(400).json({
         success: false,
@@ -72,9 +67,7 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // Validate dependsOn
-    // -----------------------------------------
+ 
     if (!Array.isArray(dependsOn)) {
       return res.status(400).json({
         success: false,
@@ -82,12 +75,10 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // Convert dependency IDs to strings
+    
     const dependencyIds = dependsOn.map(String);
 
-    // -----------------------------------------
-    // Prevent duplicate dependencies
-    // -----------------------------------------
+  
     const uniqueDependencies = [
       ...new Set(dependencyIds),
     ];
@@ -101,9 +92,7 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // Queue capacity check
-    // -----------------------------------------
+
     const waitingCount = await jobQueue.getWaitingCount();
 
     if (
@@ -120,9 +109,7 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // -----------------------------------------
-    // Find dependency jobs
-    // -----------------------------------------
+
     const dependencyJobs = [];
 
     for (const dependencyJobId of uniqueDependencies) {
@@ -140,7 +127,10 @@ export const createJob = async (req, res) => {
             `Dependency job ${dependencyJobId} not found`,
         });
       }
-
+const cycleDetected = await wouldCreateCycle(
+    dependencyJob.id, // new job's DB id is NOT available yet
+    dependencyJob.id
+  );
       dependencyJobs.push(dependencyJob);
     }
 

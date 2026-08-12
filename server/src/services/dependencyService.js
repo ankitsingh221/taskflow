@@ -125,3 +125,49 @@ export const resolveDependents = async (jobId) => {
     );
   }
 };
+
+
+export const wouldCreateCycle = async (
+  jobId,
+  dependsOnJobId
+) => {
+  // Direct self dependency
+  if (jobId === dependsOnJobId) {
+    return true;
+  }
+
+  const visited = new Set();
+
+  const visit = async (currentJobId) => {
+    // We reached the job we're trying to add a dependency to.
+    if (currentJobId === jobId) {
+      return true;
+    }
+
+    if (visited.has(currentJobId)) {
+      return false;
+    }
+
+    visited.add(currentJobId);
+
+    const dependencies =
+      await prisma.jobDependency.findMany({
+        where: {
+          jobId: currentJobId,
+        },
+        select: {
+          dependsOnJobId: true,
+        },
+      });
+
+    for (const dependency of dependencies) {
+      if (await visit(dependency.dependsOnJobId)) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
+  return visit(dependsOnJobId);
+};
