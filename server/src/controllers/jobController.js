@@ -3,6 +3,7 @@ import { getJobById } from "../services/jobServices.js";
 import prisma from "../config/prisma.js";
 
 const MAX_DELAY = 7 * 24 * 60 * 60 * 1000;
+const MAX_QUEUE_SIZE = parseInt(process.env.MAX_QUEUE_SIZE || 100);
 
 const STATUS = {
   WAITING: "waiting",
@@ -19,12 +20,7 @@ const STATUS = {
  */
 export const createJob = async (req, res) => {
   try {
-    const {
-      name,
-      data,
-      priority = 1,
-      delay = 0,
-    } = req.body;
+    const { name, data, priority = 1, delay = 0 } = req.body;
 
     // Validate job name
     if (!name) {
@@ -35,11 +31,7 @@ export const createJob = async (req, res) => {
     }
 
     // Validate priority
-    if (
-      !Number.isInteger(priority) ||
-      priority < 1 ||
-      priority > 10
-    ) {
+    if (!Number.isInteger(priority) || priority < 1 || priority > 10) {
       return res.status(400).json({
         success: false,
         message: "Priority must be an integer between 1 and 10",
@@ -62,11 +54,21 @@ export const createJob = async (req, res) => {
       });
     }
 
-    const scheduledAt =
-      delay > 0
-        ? new Date(Date.now() + delay)
-        : null;
-
+    
+    const waitingCount = await jobQueue.getWaitingCount();
+    
+    if (waitingCount >= MAX_QUEUE_SIZE) {
+      return res.status(429).json({
+        success: false,
+        message: "Queue is currently full. Please try again later.",
+        queue: {
+          waiting: waitingCount,
+          limit: MAX_QUEUE_SIZE,
+        },
+      });
+    }
+    
+    const scheduledAt = delay > 0 ? new Date(Date.now() + delay) : null;
     console.log("Adding job to queue...");
     console.log("Name:", name);
     console.log("Data:", data);
@@ -76,21 +78,17 @@ export const createJob = async (req, res) => {
     /*
      * Add job to BullMQ
      */
-    const job = await jobQueue.add(
-      name,
-      data || {},
-      {
-        priority,
-        delay,
-        attempts: 3,
-        backoff: {
-          type: "exponential",
-          delay: 2000,
-        },
-        removeOnComplete: true,
-        removeOnFail: false,
-      }
-    );
+    const job = await jobQueue.add(name, data || {}, {
+      priority,
+      delay,
+      attempts: 3,
+      backoff: {
+        type: "exponential",
+        delay: 2000,
+      },
+      removeOnComplete: true,
+      removeOnFail: false,
+    });
 
     /*
      * Store logical job in PostgreSQL
@@ -99,10 +97,7 @@ export const createJob = async (req, res) => {
       data: {
         jobId: job.id,
         name: job.name,
-        status:
-          delay > 0
-            ? STATUS.SCHEDULED
-            : STATUS.WAITING,
+        status: delay > 0 ? STATUS.SCHEDULED : STATUS.WAITING,
         priority,
         progress: 0,
         payload: data || {},
@@ -134,7 +129,6 @@ export const createJob = async (req, res) => {
   }
 };
 
-
 /*
  * Get Job Status
  */
@@ -164,7 +158,6 @@ export const getJobStatus = async (req, res) => {
     });
   }
 };
-
 
 /*
  * Cancel Job
@@ -221,8 +214,7 @@ export const cancelJob = async (req, res) => {
     if (!bullJob) {
       return res.status(409).json({
         success: false,
-        message:
-          "Job is no longer available in the queue",
+        message: "Job is no longer available in the queue",
       });
     }
 
@@ -232,7 +224,7 @@ export const cancelJob = async (req, res) => {
     const state = await bullJob.getState();
 
     console.log(
-      `🛑 Cancellation requested for job ${id}. BullMQ state: ${state}`
+      `🛑 Cancellation requested for job ${id}. BullMQ state: ${state}`,
     );
 
     /*
@@ -241,10 +233,7 @@ export const cancelJob = async (req, res) => {
      * These jobs have not started processing yet.
      * We can safely remove them from BullMQ.
      */
-    if (
-      state === "waiting" ||
-      state === "delayed"
-    ) {
+    if (state === "waiting" || state === "delayed") {
       await bullJob.remove();
 
       await prisma.job.update({
@@ -257,9 +246,7 @@ export const cancelJob = async (req, res) => {
         },
       });
 
-      console.log(
-        `🛑 Job ${id} removed from queue and canceled`
-      );
+      console.log(`🛑 Job ${id} removed from queue and canceled`);
 
       return res.status(200).json({
         success: true,
@@ -295,14 +282,11 @@ export const cancelJob = async (req, res) => {
         },
       });
 
-      console.log(
-        `🛑 Job ${id} marked as canceled while active`
-      );
+      console.log(`🛑 Job ${id} marked as canceled while active`);
 
       return res.status(200).json({
         success: true,
-        message:
-          "Job cancellation requested. Worker will stop processing.",
+        message: "Job cancellation requested. Worker will stop processing.",
         jobId: id,
         status: STATUS.CANCELED,
       });
@@ -319,10 +303,7 @@ export const cancelJob = async (req, res) => {
     /*
      * COMPLETED / FAILED in BullMQ
      */
-    if (
-      state === "completed" ||
-      state === "failed"
-    ) {
+    if (state === "completed" || state === "failed") {
       return res.status(409).json({
         success: false,
         message: `Job is already ${state} and cannot be canceled`,

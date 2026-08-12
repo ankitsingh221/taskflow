@@ -5,9 +5,10 @@ import {
   cancelJob,
 } from "../controllers/jobController.js";
 
+import jobCreationRateLimiter from "../middleware/rateLimiter.js";
 const router = express.Router();
 
-router.post("/", createJob);
+router.post("/",jobCreationRateLimiter, createJob);
 router.get("/:id", getJobStatus);
 
 // Cancel a job
