@@ -1,12 +1,11 @@
 # Dependencies
 node_modules/
-package-lock.json
-yarn.lock
+
 
 # Environment files
 .env
-.env.local
-.env.production
+.env.*
+!.env.example
 
 # Logs
 logs/
@@ -38,6 +37,7 @@ coverage/
 tmp/
 temp/
 
+# AI / agent files
 .agents/
 .claude/
 .windsurf/
