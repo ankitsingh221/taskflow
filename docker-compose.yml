@@ -1,25 +1,88 @@
 services:
+
   postgres:
     image: postgres:16
     container_name: taskflow-postgres
+
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: taskflow
+
     ports:
       - "5432:5432"
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     restart: unless-stopped
+
 
   redis:
     image: redis:7
     container_name: taskflow-redis
+
     ports:
       - "6379:6379"
+
     volumes:
       - redis_data:/data
+
     restart: unless-stopped
+
+
+  api:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+
+    container_name: taskflow-api
+
+    ports:
+      - "5000:5000"
+
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/taskflow
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+    depends_on:
+      - postgres
+      - redis
+
+    restart: unless-stopped
+
+
+  worker:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+
+    container_name: taskflow-worker
+
+    environment:
+      NODE_ENV: production
+
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/taskflow
+
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+
+      WORKER_ID: worker-1
+      WORKER_CONCURRENCY: 1
+
+    depends_on:
+      - postgres
+      - redis
+
+    command: npm run start:worker
+
+    restart: unless-stopped
+
 
 volumes:
   postgres_data:
