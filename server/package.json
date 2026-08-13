@@ -7,7 +7,8 @@
     "dev": "nodemon src/app.js",
     "dev:worker": "nodemon src/workers/jobWorker.js",
     "start": "node src/app.js",
-    "start:worker": "node src/workers/jobWorker.js"
+    "start:worker": "node src/workers/jobWorker.js",
+     "load:test":"node src/scripts/loadTest.js"
   },
   "keywords": [],
   "author": "",

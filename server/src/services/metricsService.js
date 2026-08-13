@@ -93,6 +93,7 @@ export const getMetrics = async () => {
     "failed",
     "delayed",
     "paused",
+    "prioritized",
   );
 
   /*
@@ -233,7 +234,10 @@ export const getMetrics = async () => {
     },
 
     queue: {
-      waiting: queueCounts.waiting ?? 0,
+      waiting:
+        (queueCounts.waiting ?? 0) +
+        (queueCounts.prioritized ?? 0),
+      prioritized: queueCounts.prioritized ?? 0,
       active: queueCounts.active ?? 0,
       completed: queueCounts.completed ?? 0,
       failed: queueCounts.failed ?? 0,
