@@ -11,15 +11,82 @@ import {
   stopHeartbeat,
   incrementActiveJobs,
   decrementActiveJobs,
+  WORKER_STATUS,
 } from "../services/workerHealthService.js";
 
 const QUEUE_NAME = "taskflow-queue";
 
-const WORKER_ID =
-  process.env.WORKER_ID || `worker-${process.pid}`;
+/*
+ * Resolve the candidate worker identifier.
+ *
+ * An explicit WORKER_ID (env var) always wins.
+ *
+ * Otherwise assign the next sequential number based
+ * on already-registered workers:
+ *
+ *   worker-1, worker-2, worker-3, ...
+ *
+ * This lets multiple `npm run start:worker` terminals
+ * register as distinct workers automatically.
+ */
+async function nextWorkerNumber() {
+  const workers = await prisma.worker.findMany({
+    select: {
+      workerId: true,
+    },
+  });
+
+  const maxNumber = workers.reduce((max, worker) => {
+    const match = String(worker.workerId).match(/^worker-(\d+)$/);
+    return match ? Math.max(max, Number(match[1])) : max;
+  }, 0);
+
+  return maxNumber + 1;
+}
+
+/*
+ * Claim the next sequential worker ID atomically.
+ *
+ * Uses a plain create so the DB unique constraint
+ * guarantees that two workers starting at the same
+ * time NEVER share the same worker ID.
+ */
+async function claimWorkerId(concurrency) {
+  let number = await nextWorkerNumber();
+
+  for (;;) {
+    const workerId = `worker-${number}`;
+
+    try {
+      await prisma.worker.create({
+        data: {
+          workerId,
+          status: WORKER_STATUS.HEALTHY,
+          startedAt: new Date(),
+          lastHeartbeat: new Date(),
+          activeJobs: 0,
+          concurrency,
+          stoppedAt: null,
+        },
+      });
+
+      return workerId;
+    } catch (err) {
+      if (err.code === "P2002") {
+        number += 1;
+        continue;
+      }
+
+      throw err;
+    }
+  }
+}
 
 const CONCURRENCY =
   Number(process.env.WORKER_CONCURRENCY || 1);
+
+const WORKER_ID =
+  process.env.WORKER_ID || (await claimWorkerId(CONCURRENCY));
 
 let heartbeatTimer = null;
 
