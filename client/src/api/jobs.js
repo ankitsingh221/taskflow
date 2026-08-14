@@ -9,3 +9,13 @@ export const cancelJob = async (jobId) => {
   const { data } = await api.post(`/api/jobs/${jobId}/cancel`);
   return data;
 };
+
+export const createJob = async ({ name, data, priority, delay, idempotencyKey, dependsOn }) => {
+  const headers = idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : undefined;
+  const { data: response } = await api.post(
+    '/api/jobs',
+    { name, data, priority, delay, dependsOn },
+    { headers },
+  );
+  return response;
+};

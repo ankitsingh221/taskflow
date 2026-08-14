@@ -49,6 +49,23 @@
     @apply w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/40;
   }
 
+  .tf-label {
+    @apply mb-1.5 block text-sm font-medium text-gray-300;
+  }
+
+  .tf-textarea {
+    @apply w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/40;
+  }
+
+  .tf-form-error {
+    @apply mt-1 text-xs text-red-400;
+  }
+
+  .tf-input-error,
+  .tf-textarea-error {
+    @apply border-red-500/50 focus:border-red-500 focus:ring-red-500/40;
+  }
+
   .tf-status {
     @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium;
   }
