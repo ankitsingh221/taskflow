@@ -1,309 +1,961 @@
-# TaskFlow — Distributed Job Queue System
+# TaskFlow 🚀
 
-A full-stack job queue platform with scheduling, priorities, dependencies, automatic retries with exponential backoff, a dead letter queue, and live monitoring.
+**Distributed Job Queue & Background Processing System**
 
-**Stack:** Node.js · Express · PostgreSQL · Redis · BullMQ · React · Vite · Tailwind CSS · Docker
+TaskFlow is a distributed background job processing system designed to schedule, execute, monitor, retry, and recover asynchronous jobs using multiple workers.
 
----
-
-## Features
-
-- **Job creation & scheduling** — submit jobs with priority (1–10), optional delay (up to 7 days), and arbitrary JSON payloads.
-- **Dependencies** — express that a job may only start once other jobs have completed; dependent jobs are held in a `BLOCKED` state and released automatically.
-- **Reliable processing** — a BullMQ worker processes the queue with up to **3 attempts** and **exponential backoff** (starting at 2s).
-- **Dead letter queue (DLQ)** — jobs that exhaust all retries are permanently failed, flagged `isDeadLetter`, and can be retried from the UI or API.
-- **Multiple workers** — any number of worker processes can run in parallel; each auto-registers a unique `worker-1`, `worker-2`, … ID.
-- **Worker health monitoring** — heartbeats, `activeJobs` counters, and stale/stopped detection.
-- **Cancellation** — a running job can be canceled mid-execution (the worker checks for cancellation before and during processing).
-- **API dashboard** — React UI with pages for Jobs, Create Job, Job Details (activity timeline + attempt history), Queue Monitor, Workers, Metrics, and the Dead Letter Queue.
-- **Production hardening** — health check endpoint, graceful shutdown, central error handler that never leaks internals, rate limiting on job creation, queue-full backpressure (HTTP 429), and CORS/Helmet security headers.
+The project demonstrates practical distributed-systems concepts including job queues, worker concurrency, retries, failure recovery, Dead Letter Queues, job dependencies, idempotency, rate limiting, backpressure, monitoring, and multiple worker processes for horizontal processing capacity.
 
 ---
 
-## Architecture
+## 🌐 Live Demo
 
-```
-        ┌──────────────┐   HTTP    ┌──────────────────────────────┐
-        │   React app  │ ─────────▶│       Express API            │
-        │   (Vite)     │  JSON     │  controllers · routes        │
-        └──────────────┘           │  rate limiter · health       │
-                                   └──────┬──────────────┬────────┘
-                                          │              │
-                                    writes/reads   enqueues via
-                                          │              │
-                                   ┌──────▼──────┐  ┌────▼──────────┐
-                                   │ PostgreSQL  │  │  Redis        │
-                                   │ (jobs,      │  │ (BullMQ       │
-                                   │  attempts,  │  │  "taskflow-   │
-                                   │  workers)   │  │  queue")      │
-                                   └──────▲──────┘  └────▲──────────┘
-                                          │              │
-                                   ┌──────┴──────────────┴──────┐
-                                   │        Worker(s)           │
-                                   │  process jobs · heartbeat  │
-                                   │  retries · DLQ · cancel    │
-                                   └────────────────────────────┘
-```
-
-The **API** owns the durable state (PostgreSQL) and pushes work into **BullMQ** (Redis). **Workers** pull jobs, record each attempt in PostgreSQL, update progress/status as they run, and re-queue failed jobs until retries run out — after which the job lands in the dead letter queue.
+- **Frontend:** [Clcick me](https://taskflow-frontend-zeei.onrender.com/)
+- **Backend API:** [Click me](https://taskflow-api-2ube.onrender.com/)
 
 ---
 
-## Project structure
+## 📸 Screenshots
+
+### 📊 Dashboard
+
+![TaskFlow Dashboard](images/dashBoard.png)
+
+### ➕ Create Job
+
+![Create Job](images/createJobPage.png)
+
+### 📋 Jobs
+
+![Jobs](images/jobPage.png)
+
+### 👷 Workers
+
+![Workers](images/workersPage.png)
+
+### 📈 Queue Monitoring
+
+![Queue Monitoring](images/Queue_monitor.png)
+
+### 📊 Metrics
+
+![Metrics](images/metricesPage.png)
+
+### 💀 Dead Letter Queue
+
+![Dead Letter Queue](images/dlqPage.png)
+
+---
+
+
+## 🎯 Problem
+
+In a traditional web application, a long-running operation may be processed directly inside an API request:
 
 ```
-taskflow/
-├── client/                        # React + Vite dashboard
+Client
+   │
+   ▼
+API Server
+   │
+   ▼
+Long-running Task
+   │
+   ▼
+Response
+```
+
+This can cause:
+
+- slow API responses
+- poor failure recovery
+- difficult retry handling
+- limited processing capacity
+- jobs being lost when application processes fail
+- difficulty scaling background workloads
+
+TaskFlow separates job submission from job execution:
+
+```
+Client
+   │
+   ▼
+Express API
+   │
+   ▼
+Redis / BullMQ
+   │
+   ▼
+Workers
+   │
+   ▼
+Job Processing
+   │
+   ▼
+PostgreSQL
+```
+
+The API can accept work while independent workers process jobs asynchronously.
+
+---
+
+## 🏗️ System Architecture
+
+```
+                    ┌──────────────────┐
+                    │   React Client   │
+                    └────────┬─────────┘
+                             │
+                             ▼
+                    ┌──────────────────┐
+                    │   Express API    │
+                    └───────┬───┬──────┘
+                            │   │
+                 ┌──────────┘   └──────────┐
+                 ▼                         ▼
+          ┌──────────────┐          ┌──────────────┐
+          │  PostgreSQL  │          │ Redis/BullMQ │
+          │    Prisma    │          └──────┬───────┘
+          └──────────────┘                 │
+                              ┌────────────┼────────────┐
+                              ▼            ▼            ▼
+                          Worker 1     Worker 2     Worker 3
+```
+
+The API writes application data directly to PostgreSQL and pushes jobs onto the Redis/BullMQ queue. Workers act as independent consumers, pulling jobs off that queue and processing them asynchronously.
+
+### Core components
+
+| Component | Responsibility |
+|---|---|
+| React + Vite | Web dashboard |
+| Node.js + Express | REST API |
+| PostgreSQL | Persistent job/application data |
+| Prisma | Database access |
+| Redis | Queue infrastructure |
+| BullMQ | Job scheduling and processing |
+| Workers | Background job execution |
+| Docker | Local infrastructure |
+| Render | Production deployment |
+
+---
+
+## ✨ Features
+
+### Job Processing
+- Create jobs
+- Job status tracking
+- Progress tracking
+- Priority-based processing
+- Delayed jobs
+- Job cancellation
+
+### Reliability
+- Automatic retries
+- Configurable maximum attempts
+- Attempt history
+- Dead Letter Queue
+- Failure recovery
+- Worker crash recovery
+
+### Distributed Processing
+- Multiple workers
+- Configurable worker concurrency
+- Parallel job processing
+- Worker health monitoring
+
+### Workflow Processing
+- Job dependencies
+- Multiple dependencies
+- Dependency failure propagation
+- Circular dependency prevention
+
+### Duplicate Prevention
+- Idempotency
+- Duplicate job prevention
+
+### Traffic Control
+- Rate limiting
+- Backpressure
+
+### Monitoring
+- Queue metrics
+- Worker health
+- Job progress
+- Job attempts
+- Failure tracking
+- DLQ monitoring
+
+### Validation & Testing
+- API testing
+- Failure testing
+- Worker crash testing
+- Concurrency testing
+- Multi-worker testing
+- Load testing
+
+---
+
+## 🔄 Job Lifecycle
+
+A normal job follows this flow:
+
+```
+                    ┌───────────┐
+                    │  Created  │
+                    └─────┬─────┘
+                          │
+                          ▼
+                    ┌───────────┐
+                    │  Waiting  │
+                    └─────┬─────┘
+                          │
+                          ▼
+                    ┌───────────┐
+                    │   Active  │
+                    └─────┬─────┘
+                          │
+                    ┌─────┴─────┐
+                    │           │
+                    ▼           ▼
+                Successful    Failed
+                    │           │
+                    ▼           ▼
+                Completed     Retry
+                                │
+                         ┌──────┴──────┐
+                         │             │
+                         ▼             ▼
+                     Success     Attempts Exhausted
+                         │             │
+                         ▼             ▼
+                    Completed         DLQ
+```
+
+Delayed jobs additionally wait for their scheduled execution time before entering the processing flow.
+
+---
+
+## 🔁 Retry & Dead Letter Queue
+
+TaskFlow retries failed jobs according to their configured attempt limit.
+
+**Example:**
+
+```
+Attempt 1
+   │
+   └── Failed
+         ↓
+Attempt 2
+   │
+   └── Failed
+         ↓
+Attempt 3
+   │
+   └── Failed
+         ↓
+   Attempts Exhausted
+         ↓
+        DLQ
+```
+
+**Verified failure test**
+
+A failure test intentionally generated:
+
+```
+Attempts:        3 / 3
+Final status:    failed
+Dead Letter:     true
+Completed:       false
+```
+
+The job was not incorrectly marked as completed after exhausting its retry attempts.
+
+---
+
+## 👷 Multiple Workers & Concurrency
+
+TaskFlow supports multiple worker processes for horizontal processing capacity, as well as per-worker concurrency.
+
+For example:
+
+```
+                  Redis / BullMQ
+                       │
+          ┌────────────┼────────────┐
+          ▼            ▼            ▼
+       Worker 1     Worker 2     Worker 3
+       Concurrency  Concurrency  Concurrency
+           3            3            3
+```
+
+This provides a total observed processing concurrency of:
+
+```
+3 workers × 3 concurrency = 9 concurrent jobs
+```
+
+---
+
+## 📈 Load Testing Results
+
+Load testing was performed to evaluate how worker count and concurrency affect processing time.
+
+### 100 Jobs
+
+| Workers | Concurrency | Jobs | Completion |
+|---|---|---|---|
+| 1 | 1 | 100 | 11.21 min |
+| 1 | 3 | 100 | 4.02 min |
+| 3 | 1 | 100 | ~4 min |
+| 3 | 3 | 100 | 1.17 min |
+
+**What the results demonstrate**
+
+Increasing concurrency on a single worker reduced completion time from:
+
+```
+11.21 min → 4.02 min
+```
+
+Using three workers at concurrency 1 produced approximately:
+
+```
+11.21 min → ~4 min
+```
+
+Using both multiple workers and higher concurrency reduced the observed completion time further:
+
+```
+3 workers × 3 concurrency
+              ↓
+         1.17 minutes
+```
+
+This demonstrates the practical effect of parallel background processing.
+
+> These are observed test results rather than theoretical throughput guarantees.
+
+---
+
+## 🚀 500-Job Load Test
+
+A larger test was performed with:
+
+```
+Jobs:                500
+Request concurrency: 20
+Workers:             3
+Worker concurrency:  1
+```
+
+### Submission
+
+```
+Successfully submitted: 500 / 500
+Failed requests:        0
+Submission duration:    1.54 sec
+Request throughput:     325.52 jobs/sec
+```
+
+### Processing
+
+```
+Total completion time:      20.09 minutes
+Average processing time:    7.656 sec
+Average queue latency:      214.326 sec
+Observed waiting jobs:      494
+```
+
+### Worker health
+
+```
+Healthy workers: 3
+Stale workers:   0
+Stopped workers: 0
+```
+
+### Result
+
+**PASS**
+
+All 500 job submission requests succeeded, and the three workers remained healthy during the observed test.
+
+> 325.52 jobs/sec represents job submission throughput, not worker processing throughput.
+
+---
+
+## 💥 Worker Crash Recovery
+
+TaskFlow was explicitly tested against worker failure.
+
+**Test**
+
+```
+Workers:             2
+Worker concurrency:  1
+```
+
+- A long-running job was started by Worker 1.
+- Worker 1 was intentionally crashed while the job was active.
+- The remaining worker detected and recovered the interrupted job.
+
+**Result**
+
+```
+Attempt 1 → Worker 1 crashed
+              ↓
+         Job recovered
+              ↓
+Attempt 2 → Worker 2
+              ↓
+          Completed
+```
+
+Verified:
+
+```
+Status:       completed
+Attempts:     2
+Progress:     100%
+Dead Letter:  false
+Job lost:     false
+```
+
+This demonstrates that an active job can be recovered by another healthy worker after a worker failure.
+
+---
+
+## 🛑 Job Cancellation
+
+TaskFlow supports cancellation of jobs during processing.
+
+A running job was canceled intentionally.
+
+Verified behavior:
+
+```
+Job started
+    ↓
+Cancellation requested
+    ↓
+Worker detected cancellation
+    ↓
+Processing stopped
+    ↓
+Job → canceled
+    ↓
+Attempt → canceled
+```
+
+The canceled job:
+
+```
+Retry:       No
+DLQ:         No
+Attempts:    1
+Dead Letter: false
+```
+
+This prevents user-canceled work from being unnecessarily retried.
+
+---
+
+## 🔗 Job Dependencies
+
+TaskFlow supports dependent jobs.
+
+**Example:**
+
+```
+Job A
+  │
+  ▼
+Job B
+  │
+  ▼
+Job C
+```
+
+A job with multiple dependencies remains blocked until all of its required dependencies are satisfied:
+
+```
+Job A
+ ├──→ Job B
+ └──→ Job C
+        │
+        ▼
+      Job D
+```
+
+A dependent job remains blocked until its required dependencies are satisfied.
+
+The system also handles:
+
+- single dependencies
+- multiple dependencies
+- dependency failure propagation
+- circular dependency prevention
+
+---
+
+## 🔐 Idempotency
+
+TaskFlow implements idempotency to prevent duplicate logical jobs when clients retry requests.
+
+Conceptually:
+
+```
+Incoming Request
+       │
+       ▼
+Idempotency Key
+       │
+   ┌───┴────┐
+   │        │
+Exists     New
+   │        │
+   ▼        ▼
+Existing   Create
+Job        Job
+```
+
+This is useful in distributed systems where a client may retry a request because of a timeout or temporary network failure.
+
+---
+
+## 🚦 Rate Limiting & Backpressure
+
+TaskFlow includes rate limiting on job creation and queue backpressure mechanisms.
+
+The processing pipeline can be viewed as:
+
+```
+Incoming Requests
+        │
+        ▼
+   Rate Limiting
+        │
+        ▼
+     Job Queue
+        │
+        ▼
+      Workers
+```
+
+Rate limiting controls incoming job-creation traffic, while backpressure helps prevent the processing pipeline from being overwhelmed by workloads exceeding available worker capacity.
+
+---
+
+## 📊 Monitoring
+
+TaskFlow provides a dashboard for observing the system.
+
+The monitoring layer exposes information including:
+
+**Jobs**
+- total jobs
+- waiting jobs
+- active jobs
+- completed jobs
+- failed jobs
+- retrying jobs
+- canceled jobs
+- dead-letter jobs
+- blocked jobs
+
+**Queue**
+- waiting jobs
+- prioritized jobs
+- active jobs
+- failed jobs
+- delayed jobs
+- queue state
+
+**Performance**
+- average processing time
+- average queue latency
+
+**Attempts**
+- total attempts
+- failed attempts
+- completed attempts
+
+**Workers**
+- healthy workers
+- stale workers
+- stopped workers
+- total workers
+
+---
+
+## 🧪 Testing
+
+TaskFlow was validated through API, worker, failure, concurrency, and load testing.
+
+### Tested flows
+
+**Successful processing**
+```
+Create
+  ↓
+Queue
+  ↓
+Worker
+  ↓
+Process
+  ↓
+Progress
+  ↓
+Complete
+```
+
+**Retry and DLQ**
+```
+Create
+  ↓
+Failure
+  ↓
+Retry
+  ↓
+Failure
+  ↓
+Attempts exhausted
+  ↓
+DLQ
+```
+
+**Worker failure**
+```
+Worker 1
+   ↓
+Crash
+   ↓
+Job recovered
+   ↓
+Worker 2
+   ↓
+Completed
+```
+
+**Cancellation**
+```
+Create
+  ↓
+Processing
+  ↓
+Cancel
+  ↓
+Canceled
+```
+
+**Multi-worker processing**
+```
+Queue
+ ├── Worker 1
+ ├── Worker 2
+ └── Worker 3
+```
+
+### Load testing
+
+Tested configurations included:
+
+- 1 worker × 1 concurrency
+- 1 worker × 3 concurrency
+- 3 workers × 1 concurrency
+- 3 workers × 3 concurrency
+- 500-job workload with 3 workers
+
+---
+
+## 🛠️ Tech Stack
+
+**Frontend**
+- React
+- Vite
+- JavaScript
+- CSS
+
+**Backend**
+- Node.js
+- Express.js
+- JavaScript ES Modules
+
+**Database**
+- PostgreSQL
+- Prisma ORM
+
+**Queue Infrastructure**
+- Redis
+- BullMQ
+- ioredis
+
+**Infrastructure & Deployment**
+- Docker
+- Docker Compose
+- Render
+
+**Development & Testing**
+- Git
+- GitHub
+- Postman
+
+---
+
+## 📁 Project Structure
+
+```
+TaskFlow/
+│
+├── client/
 │   ├── src/
-│   │   ├── pages/                 # Dashboard, Jobs, CreateJob, JobDetails,
-│   │   │                          # QueueMonitor, Workers, Metrics, DLQ
-│   │   ├── components/            # jobs/, dashboard/, queue/, workers/, dlq/, layout/, ui/
-│   │   ├── api/                   # axios instance + endpoint helpers
-│   │   └── utils/                 # formatting, validation, job-activity helpers
-│   ├── .env.example
-│   └── vite.config.js
+│   │   ├── components/
+│   │   ├── pages/
+│   │   ├── ...
+│   │   └── index.css
+│   └── package.json
 │
 ├── server/
 │   ├── src/
-│   │   ├── app.js                 # Express entry, middleware, /health, graceful shutdown
-│   │   ├── config/                # database (pg Pool), prisma, redis connections
-│   │   ├── routes/                # job, worker, metrics, dlq, dependency routes
-│   │   ├── controllers/           # request/response handling
-│   │   ├── services/              # business logic (jobs, attempts, dependencies,
-│   │   │                          #   dlq, metrics, worker health)
-│   │   ├── queues/                # BullMQ queue definition
-│   │   ├── workers/               # job worker (processing, retries, DLQ)
-│   │   ├── middleware/            # rate limiter
-│   │   └── scripts/               # load test
-│   ├── .env.example
+│   │   ├── controllers/
+│   │   ├── routes/
+│   │   ├── workers/
+│   │   ├── middleware/
+│   │   └── ...
+│   ├── prisma/
 │   └── package.json
 │
-├── docker-compose.yml             # postgres + redis + api + worker
-└── readme.md
+├── docs/
+│
+├── docker-compose.yml
+├── README.md
+└── .gitignore
+```
+---
+
+## 🚀 Local Development
+
+### Prerequisites
+
+- Node.js
+- Docker Desktop
+- Git
+
+### Clone
+
+```bash
+git clone YOUR_REPOSITORY_URL
+cd TaskFlow
 ```
 
----
-
-## Prerequisites
-
-- **Node.js 18+**
-- **PostgreSQL 14+** running locally (or a managed instance)
-- **Redis 7+** running locally (or a managed instance, e.g. Redis Cloud)
-
-> No local installs needed if you use `docker-compose up` (see below).
-
----
-
-## Setup
-
-### 1. Backend (API + worker)
+### Backend
 
 ```bash
 cd server
 npm install
-cp .env.example .env    # then fill in your values
 ```
 
-Start the **API**:
+Create a `.env` file:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/taskflow
+
+REDIS_HOST=localhost
+REDIS_PORT=6379
+
+PORT=5000
+
+WORKER_CONCURRENCY=3
+```
+
+### Start PostgreSQL & Redis
+
+From the project root:
 
 ```bash
-npm run dev             # or: npm start
+docker compose up -d
 ```
 
-Start one or more **workers** (one terminal each — each registers as a distinct worker):
+### Database
 
 ```bash
-npm run dev:worker      # or: npm run start:worker
+npx prisma migrate dev
 ```
 
-The API serves on `http://localhost:5000` by default (`PORT` env var).
+> Replace this with the exact Prisma command(s) your project actually uses (e.g. `migrate deploy` if the database is already migrated).
 
-### 2. Frontend dashboard
+### Start Backend
+
+```bash
+npm run dev
+```
+
+### Start Worker
+
+In another terminal:
+
+```bash
+npm run start:worker
+```
+
+### Frontend
 
 ```bash
 cd client
 npm install
-cp .env.example .env    # set VITE_API_URL, e.g. http://localhost:5000
-npm run dev             # http://localhost:5173
 ```
 
----
+Create the frontend environment file:
 
-## Docker Compose (optional)
+```env
+VITE_API_URL=http://localhost:5000
+```
 
-Runs PostgreSQL, Redis, the API, and a single worker together:
+Then start:
 
 ```bash
-docker compose up --build
+npm run dev
 ```
-
-- API → `http://localhost:5000`
-- Worker runs `npm run start:worker` with `WORKER_ID=worker-1`
 
 ---
 
-## API Reference
+## 🌍 Production Deployment
 
-Base URL: `http://localhost:5000`
+TaskFlow is deployed using Render.
 
-### Health
-
-| Method | Endpoint   | Description                                      |
-| ------ | ---------- | ------------------------------------------------ |
-| GET    | `/`        | Service banner                                   |
-| GET    | `/health`  | `200` when DB + Redis are connected, `503` otherwise |
-
-```json
-{ "status": "ok", "database": "connected", "redis": "connected" }
+```
+                     ┌────────────────────┐
+                     │      Frontend      │
+                     │       Render       │
+                     └─────────┬──────────┘
+                               │
+                               ▼
+                     ┌────────────────────┐
+                     │      Backend       │
+                     │       Render       │
+                     └─────────┬──────────┘
+                               │
+                    ┌──────────┴──────────┐
+                    ▼                     ▼
+             ┌──────────────┐      ┌──────────────┐
+             │  PostgreSQL  │      │    Redis     │
+             └──────────────┘      └──────┬───────┘
+                                          │
+                                          ▼
+                                    ┌────────────┐
+                                    │   Worker   │
+                                    └────────────┘
 ```
 
-### Jobs
+The production frontend communicates with the deployed backend through:
 
-| Method | Endpoint                | Description                                          |
-| ------ | ----------------------- | ---------------------------------------------------- |
-| POST   | `/api/jobs`             | Create a job (rate-limited, see env vars)            |
-| GET    | `/api/jobs`             | List jobs (`?status=`, `?search=`, `?page=`, `?limit=`; `status=dlq` lists dead-letter jobs) |
-| GET    | `/api/jobs/:id`         | Job detail                                           |
-| GET    | `/api/jobs/:id/attempts`| Execution attempts                                   |
-| POST   | `/api/jobs/:id/cancel`  | Cancel a job (running or pending)                    |
+```
+VITE_API_URL
+```
+---
 
-**Create a job — `POST /api/jobs`**
+## 🔒 Production Hardening
+
+The backend was audited for production readiness, including:
+
+- environment-based configuration
+- CORS configuration
+- consistent error handling
+- input validation
+- job ID validation
+- cancellation behavior
+- rate limiting
+- database error handling
+- Redis/BullMQ error handling
+- graceful shutdown
+- health checks
+- logging
+- HTTP status codes
+- security headers
+- production configuration
+- secret exposure
+- accidental debug logging
+---
+
+## 📡 Example API
+
+### Create a Job
+
+`POST /jobs`
 
 ```json
 {
-  "name": "send-welcome-email",
-  "data": { "userId": 42, "template": "welcome" },
+  "name": "send-email",
+  "data": {
+    "email": "user@example.com"
+  },
   "priority": 5,
-  "delay": 0,
-  "dependsOn": ["<jobId>"]
+  "delay": 30
 }
 ```
 
-| Field      | Required | Validation                                   |
-| ---------- | -------- | -------------------------------------------- |
-| `name`     | yes      | non-empty string                             |
-| `data`     | no       | JSON object                                  |
-| `priority` | no       | integer 1–10 (default 1; higher = first)     |
-| `delay`    | no       | non-negative integer ms, ≤ 7 days            |
-| `dependsOn`| no       | array of job IDs to wait on                  |
-
-Returns `201` with the created job. Errors: `400` (validation), `409` (duplicate/conflict), `429` (rate limit or queue full).
-
-**Job statuses:** `waiting`, `scheduled`, `blocked`, `processing`, `retrying`, `completed`, `failed`, `canceled` — plus `isDeadLetter` for jobs that exhausted their retries.
-
-### Workers
-
-| Method | Endpoint                | Description                        |
-| ------ | ----------------------- | ---------------------------------- |
-| GET    | `/api/workers`          | All registered workers + health    |
-| GET    | `/api/workers/:workerId`| Single worker detail               |
-
-Each worker reports `healthy` / `stale` (no recent heartbeat) / `stopped` status and its current `activeJobs`.
-
-### Metrics
-
-| Method | Endpoint       | Description                       |
-| ------ | -------------- | --------------------------------- |
-| GET    | `/api/metrics` | Aggregate queue/job/attempt stats |
-
-### Dead letter queue
-
-| Method | Endpoint                  | Description                                  |
-| ------ | ------------------------- | -------------------------------------------- |
-| GET    | `/api/dlq`                | List dead-letter jobs                        |
-| POST   | `/api/dlq/:jobId/retry`   | Re-enqueue a dead-letter job                 |
-
-Returns `404` if the job doesn't exist, `409` if the job is not in the DLQ.
-
-### Dependencies
-
-| Method | Endpoint                      | Description                       |
-| ------ | ----------------------------- | --------------------------------- |
-| GET    | `/api/dependencies/:jobId`    | List a job's dependencies         |
-| POST   | `/api/dependencies/:jobId`    | Add a dependency                  |
+The API places the job into the BullMQ queue, where an available worker processes it asynchronously.
 
 ---
 
-## Environment variables
+## 🎓 Engineering Concepts Demonstrated
 
-### Server (`server/.env`)
+TaskFlow demonstrates practical concepts used in distributed backend systems:
 
-| Variable                 | Default  | Description                                    |
-| ------------------------ | -------- | ---------------------------------------------- |
-| `DATABASE_URL`           | —        | PostgreSQL connection string (required)        |
-| `REDIS_HOST`             | —        | Redis host (required)                          |
-| `REDIS_PORT`             | —        | Redis port                                     |
-| `REDIS_USERNAME`         | —        | Redis username (if required)                   |
-| `REDIS_PASSWORD`         | —        | Redis password (if required)                   |
-| `REDIS_TLS`              | `false`  | `"true"` to enable TLS for Redis (e.g. Redis Cloud) |
-| `PORT`                   | `5000`   | API port                                       |
-| `WORKER_CONCURRENCY`     | `1`      | Jobs processed concurrently per worker         |
-| `WORKER_ID`              | auto     | Fixed worker ID; when unset, workers auto-assign the next sequential `worker-N` |
-| `RATE_LIMIT_WINDOW_MS`   | `60000`  | Rate-limit window for `POST /api/jobs`         |
-| `RATE_LIMIT_MAX_REQUESTS`| `100`    | Max job creations per window                   |
-| `MAX_QUEUE_SIZE`         | `100`    | Max waiting jobs before the API returns `429`  |
-
-### Client (`client/.env`)
-
-| Variable       | Description                          |
-| -------------- | ------------------------------------ |
-| `VITE_API_URL` | Base URL of the backend API          |
+- asynchronous processing
+- producer-consumer architecture
+- distributed workers
+- horizontal scaling
+- concurrency
+- retries
+- failure recovery
+- Dead Letter Queues
+- idempotency
+- dependency management
+- rate limiting
+- backpressure
+- health monitoring
+- queue monitoring
+- graceful shutdown
+- load testing
 
 ---
 
-## How a job flows through the system
 
-1. `POST /api/jobs` validates the input, stores the job in **PostgreSQL**, and adds it to the **BullMQ** queue with priority, delay, and up to **3 attempts** with exponential backoff.
-2. If `dependsOn` jobs haven't completed, the job starts as `blocked` and waits.
-3. A **worker** picks up the job, records an attempt, and executes it. Successful jobs move to `completed` with progress tracked through `100%`.
-4. If the processor throws, the job becomes `retrying` and is re-scheduled with exponential backoff. After the 3rd failed attempt it becomes `failed` with `isDeadLetter: true`.
-5. You can **cancel** a pending/running job, or **retry** a dead-letter job from the DLQ page/API.
 
-### Testing failure → DLQ
+## 📌 Project Status
 
-Send `data` containing a `shouldFail` flag and the worker will throw on every attempt:
+**Completed ✅**
 
-```bash
-curl -X POST http://localhost:5000/api/jobs \
-  -H "Content-Type: application/json" \
-  -d '{ "name": "boom", "data": { "shouldFail": true } }'
-```
+TaskFlow currently includes:
 
----
-
-## Load testing
-
-The server ships a load test script that hammers the create-job endpoint:
-
-```bash
-cd server
-npm run load:test        # env: LOAD_TEST_JOBS (100), LOAD_TEST_CONCURRENCY (10), API_URL
-```
-
----
-
-## Deployment
-
-The API, worker, and dashboard can be deployed independently (e.g. on **Render**):
-
-- **API** — `npm start`; must be reachable by both the dashboard and the worker.
-- **Worker** — `npm run start:worker` as a separate service (scale it to add processing capacity; each instance registers as `worker-N`).
-- **Dashboard** — static build via `npm run build`; set `VITE_API_URL` at build time to point at the deployed API.
-
-The `/health` endpoint reports service readiness (DB + Redis) and is what you can point an uptime monitor at.
+- asynchronous job processing
+- delayed jobs
+- job priorities
+- cancellation
+- multiple workers
+- configurable concurrency
+- rate limiting
+- backpressure
+- retries
+- Dead Letter Queue
+- attempt history
+- job dependencies
+- idempotency
+- worker health monitoring
+- queue metrics
+- failure recovery
+- load testing
+- production hardening
+- production deployment
+- monitoring dashboard
 
 ---
 
-## Scripts
+## 👨‍💻 Author
 
-| Location  | Script               | Description                            |
-| --------- | -------------------- | -------------------------------------- |
-| `server`  | `npm run dev`        | Start API with nodemon                 |
-| `server`  | `npm start`          | Start API                              |
-| `server`  | `npm run dev:worker` | Start a worker with nodemon            |
-| `server`  | `npm run start:worker` | Start a worker                      |
-| `server`  | `npm run load:test`  | Run the job-creation load test         |
-| `client`  | `npm run dev`        | Start Vite dev server                  |
-| `client`  | `npm run build`      | Production build                       |
-| `client`  | `npm run preview`    | Preview the production build           |
-| `client`  | `npm run lint`       | Run ESLint                             |
+**Ankit Kumar**
+---
