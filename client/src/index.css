@@ -21,6 +21,10 @@
     @apply rounded-lg border border-gray-800 bg-gray-900 p-5;
   }
 
+  .tf-metric-card {
+    @apply flex items-center gap-4 rounded-lg border border-gray-800 bg-gray-900 p-5;
+  }
+
   .tf-button {
     @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:pointer-events-none disabled:opacity-50;
   }
