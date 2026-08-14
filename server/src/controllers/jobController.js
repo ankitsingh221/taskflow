@@ -19,9 +19,7 @@ const STATUS = {
   CANCELED: "canceled",
 };
 
-/*
- * Create Job
- */
+
 export const createJob = async (req, res) => {
   try {
     const {
@@ -32,20 +30,34 @@ export const createJob = async (req, res) => {
       dependsOn = [],
     } = req.body;
 
-    // ============================================================
+  
     // 1. Read Idempotency-Key
-    // ============================================================
+   
 
     const idempotencyKey = req.get("Idempotency-Key");
 
-    // ============================================================
+ 
     // 2. Validate basic fields
-    // ============================================================
 
-    if (!name) {
+
+    if (
+      typeof name !== "string" ||
+      !name.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Job name is required",
+      });
+    }
+
+    if (
+      data !== undefined &&
+      data !== null &&
+      typeof data !== "object"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: "Payload must be a JSON object",
       });
     }
 
@@ -74,9 +86,8 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // ============================================================
     // 3. Validate Idempotency-Key
-    // ============================================================
+
 
     if (idempotencyKey && idempotencyKey.length > 255) {
       return res.status(400).json({
@@ -85,9 +96,9 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // ============================================================
+
     // 4. Check existing idempotent request
-    // ============================================================
+
 
     if (idempotencyKey) {
       const existingJob = await prisma.job.findUnique({
@@ -126,9 +137,7 @@ export const createJob = async (req, res) => {
       }
     }
 
-    // ============================================================
-    // 5. Validate dependencies
-    // ============================================================
+    
 
     if (!Array.isArray(dependsOn)) {
       return res.status(400).json({
@@ -152,9 +161,9 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // ============================================================
+    
     // 6. Find dependency jobs
-    // ============================================================
+  
 
     const dependencyJobs = [];
 
@@ -175,9 +184,8 @@ export const createJob = async (req, res) => {
       dependencyJobs.push(dependencyJob);
     }
 
-    // ============================================================
     // 7. Determine dependency state
-    // ============================================================
+  
 
     const hasDependencies =
       uniqueDependencies.length > 0;
@@ -193,13 +201,12 @@ export const createJob = async (req, res) => {
       !hasDependencies ||
       allDependenciesCompleted;
 
-    // ============================================================
+  
     // 8. Queue capacity check
     //
     // Only check BullMQ capacity if this job will actually
     // enter BullMQ now.
-    // ============================================================
-
+   
     if (canStart) {
       const waitingCount =
         await jobQueue.getWaitingCount();
@@ -217,15 +224,14 @@ export const createJob = async (req, res) => {
       }
     }
 
-    // ============================================================
     // 9. Generate logical Job ID
-    // ============================================================
+
 
     const logicalJobId = crypto.randomUUID();
 
-    // ============================================================
+
     // 10. Determine initial status
-    // ============================================================
+
 
     const scheduledAt =
       canStart && delay > 0
@@ -238,9 +244,8 @@ export const createJob = async (req, res) => {
         ? STATUS.SCHEDULED
         : STATUS.WAITING;
 
-    // ============================================================
     // 11. Create PostgreSQL logical Job
-    // ============================================================
+
 
     const dbJob = await prisma.job.create({
       data: {
@@ -268,7 +273,7 @@ export const createJob = async (req, res) => {
       },
     });
 
-    // ============================================================
+
     // 12. Circular dependency detection
     //
     // IMPORTANT:
@@ -279,7 +284,7 @@ export const createJob = async (req, res) => {
     //
     // "If newJob depends on dependencyJob,
     //  would that create a cycle?"
-    // ============================================================
+
 
     for (const dependencyJob of dependencyJobs) {
       const cycleDetected =
@@ -306,9 +311,9 @@ export const createJob = async (req, res) => {
       }
     }
 
-    // ============================================================
+ 
     // 13. Create dependency records
-    // ============================================================
+
 
     if (hasDependencies) {
       await prisma.jobDependency.createMany({
@@ -321,9 +326,8 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // ============================================================
     // 14. Add to BullMQ if dependencies are satisfied
-    // ============================================================
+    
 
     let bullmqJob = null;
 
@@ -351,9 +355,8 @@ export const createJob = async (req, res) => {
         }
       );
 
-      // ==========================================================
       // 15. Store BullMQ execution ID
-      // ==========================================================
+ 
 
       await prisma.job.update({
         where: {
@@ -366,9 +369,6 @@ export const createJob = async (req, res) => {
       });
     }
 
-    // ============================================================
-    // 16. Response
-    // ============================================================
 
     return res.status(201).json({
       success: true,
@@ -405,7 +405,7 @@ export const createJob = async (req, res) => {
       error
     );
 
-    // ============================================================
+    
     // 17. Handle Idempotency race condition
     //
     // Two requests can arrive at exactly the same time.
@@ -414,7 +414,7 @@ export const createJob = async (req, res) => {
     //
     // PostgreSQL UNIQUE constraint will allow only one.
     // The other produces Prisma P2002.
-    // ============================================================
+  
 
     if (
       error.code === "P2002" &&
@@ -464,21 +464,15 @@ export const createJob = async (req, res) => {
       }
     }
 
-    // ============================================================
-    // 18. Generic error
-    // ============================================================
+  
 
     return res.status(500).json({
       success: false,
       message: "Failed to create job",
-      error: error.message,
     });
   }
 };
 
-/*
- * Get Job Status
- */
 export const getJobStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -506,16 +500,14 @@ export const getJobStatus = async (req, res) => {
   }
 };
 
-/*
- * Cancel Job
- */
+
 export const cancelJob = async (req, res) => {
   try {
     const { id } = req.params;
 
-    /*
-     * First find the logical job in PostgreSQL.
-     */
+    
+      // First find the logical job in PostgreSQL.
+     
     const dbJob = await prisma.job.findUnique({
       where: {
         jobId: id,
@@ -529,9 +521,9 @@ export const cancelJob = async (req, res) => {
       });
     }
 
-    /*
-     * Terminal states cannot be cancelled.
-     */
+    
+    //  Terminal states cannot be cancelled.
+     
     if (dbJob.status === STATUS.COMPLETED) {
       return res.status(409).json({
         success: false,
@@ -553,9 +545,9 @@ export const cancelJob = async (req, res) => {
       });
     }
 
-    /*
-     * Get corresponding BullMQ job.
-     */
+    
+      // Get corresponding BullMQ job.
+     
     if (!dbJob.bullmqJobId) {
       return res.status(409).json({
         success: false,
@@ -571,9 +563,9 @@ export const cancelJob = async (req, res) => {
         message: "Job is no longer available in the queue",
       });
     }
-    /*
-     * Determine current BullMQ state.
-     */
+    
+      // Determine current BullMQ state.
+    
     const state = await bullJob.getState();
 
     console.log(
@@ -581,10 +573,9 @@ export const cancelJob = async (req, res) => {
     );
 
     /*
-     * WAITING / DELAYED
-     *
-     * These jobs have not started processing yet.
-     * We can safely remove them from BullMQ.
+      WAITING / DELAYED
+      These jobs have not started processing yet.
+      We can safely remove them from BullMQ.
      */
     if (state === "waiting" || state === "delayed") {
       await bullJob.remove();
@@ -610,19 +601,19 @@ export const cancelJob = async (req, res) => {
     }
 
     /*
-     * ACTIVE
-     *
-     * The worker already has the job.
-     *
-     * We DO NOT remove the BullMQ job here.
-     *
-     * Instead PostgreSQL becomes:
-     *
-     * active → canceled
-     *
-     * The worker periodically checks PostgreSQL
-     * and throws JobCanceledError when it detects
-     * the cancellation.
+      ACTIVE
+     
+      The worker already has the job.
+     
+      We DO NOT remove the BullMQ job here.
+     
+      Instead PostgreSQL becomes:
+     
+      active → canceled
+     
+      The worker periodically checks PostgreSQL
+      and throws JobCanceledError when it detects
+     the cancellation.
      */
     if (state === "active") {
       await prisma.job.update({
@@ -646,16 +637,14 @@ export const cancelJob = async (req, res) => {
     }
 
     /*
-     * RETRYING jobs can be represented by a delayed
-     * BullMQ job waiting for the next retry.
-     *
-     * If BullMQ says delayed, the code above already
-     * handles it.
+      RETRYING jobs can be represented by a delayed
+    BullMQ job waiting for the next retry.
+     
+      If BullMQ says delayed, the code above already
+      handles it.
      */
 
-    /*
-     * COMPLETED / FAILED in BullMQ
-     */
+   
     if (state === "completed" || state === "failed") {
       return res.status(409).json({
         success: false,
@@ -663,9 +652,9 @@ export const cancelJob = async (req, res) => {
       });
     }
 
-    /*
-     * Fallback for unexpected BullMQ states.
-     */
+    
+    //  Fallback for unexpected BullMQ states.
+     
     return res.status(409).json({
       success: false,
       message: `Job cannot be canceled in its current state: ${state}`,
@@ -676,21 +665,11 @@ export const cancelJob = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to cancel job",
-      error: error.message,
     });
   }
 };
 
-/*
- * List Jobs
- *
- * Supports:
- *  - ?search=<term>  (matches job name or logical jobId)
- *  - ?status=<status> (waiting | scheduled | blocked | active |
- *                      completed | failed | retrying | canceled | dlq)
- *  - ?page=<n>       (1-based)
- *  - ?limit=<n>      (default 20, max 100)
- */
+
 export const listJobs = async (req, res) => {
   try {
     const {
@@ -775,7 +754,6 @@ export const listJobs = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch jobs",
-      error: error.message,
     });
   }
 };
@@ -792,7 +770,7 @@ export const getJobAttempts = async (req, res) => {
       attempts,
     });
   } catch (error) {
-    console.error("❌ Get job attempts error:", error);
+    console.error(" Get job attempts error:", error);
 
     if (error.message === "Job not found") {
       return res.status(404).json({

@@ -22,7 +22,6 @@ export const getSystemMetrics = async (
     return res.status(500).json({
       success: false,
       message: "Failed to fetch metrics",
-      error: error.message,
     });
   }
 };

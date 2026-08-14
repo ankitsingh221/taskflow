@@ -1,9 +1,7 @@
 import prisma from "../config/prisma.js";
 import { getEffectiveStatus } from "../services/workerHealthService.js";
 
-/**
- * Get all workers.
- */
+
 export const getWorkers = async (req, res) => {
   try {
     const workers = await prisma.worker.findMany({
@@ -28,14 +26,11 @@ export const getWorkers = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch workers",
-      error: error.message,
     });
   }
 };
 
-/**
- * Get a single worker.
- */
+
 export const getWorker = async (req, res) => {
   try {
     const { workerId } = req.params;
@@ -66,7 +61,6 @@ export const getWorker = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to fetch worker",
-      error: error.message,
     });
   }
 };

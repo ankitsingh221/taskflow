@@ -131,7 +131,6 @@ export const addDependency = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to create dependency",
-      error: error.message,
     });
   }
 };

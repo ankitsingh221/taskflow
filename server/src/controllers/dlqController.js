@@ -65,7 +65,6 @@ export const retryDLQJob = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to retry dead-letter job",
-      error: error.message,
     });
   }
 };
