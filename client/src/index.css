@@ -66,6 +66,26 @@
     @apply border-red-500/50 focus:border-red-500 focus:ring-red-500/40;
   }
 
+  .tf-section-title {
+    @apply text-sm font-semibold uppercase tracking-wide text-gray-400;
+  }
+
+  .tf-code-block {
+    @apply w-full overflow-x-auto rounded-md border border-gray-800 bg-gray-950 p-3 font-mono text-xs leading-relaxed text-gray-300;
+  }
+
+  .tf-detail-row {
+    @apply flex items-center justify-between gap-4 py-2.5 text-sm;
+  }
+
+  .tf-detail-label {
+    @apply text-gray-400;
+  }
+
+  .tf-detail-value {
+    @apply text-right text-gray-200;
+  }
+
   .tf-status {
     @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium;
   }

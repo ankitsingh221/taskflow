@@ -19,3 +19,18 @@ export const createJob = async ({ name, data, priority, delay, idempotencyKey, d
   );
   return response;
 };
+
+export const getJob = async (jobId) => {
+  const { data } = await api.get(`/api/jobs/${jobId}`);
+  return data;
+};
+
+export const getJobAttempts = async (jobId) => {
+  const { data } = await api.get(`/api/jobs/${jobId}/attempts`);
+  return data;
+};
+
+export const getJobDependencies = async (jobId) => {
+  const { data } = await api.get(`/api/dependencies/${jobId}`);
+  return data;
+};

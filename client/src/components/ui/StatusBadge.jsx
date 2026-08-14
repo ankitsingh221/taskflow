@@ -11,6 +11,9 @@ const STATUS_MAP = {
   STOPPED: { className: 'tf-status-danger', dot: 'bg-red-400' },
   WAITING: { className: 'tf-status-neutral', dot: 'bg-gray-400' },
   DELAYED: { className: 'tf-status-neutral', dot: 'bg-gray-400' },
+  SCHEDULED: { className: 'tf-status-neutral', dot: 'bg-gray-400' },
+  BLOCKED: { className: 'tf-status-warning', dot: 'bg-amber-400' },
+  RETRYING: { className: 'tf-status-warning', dot: 'bg-amber-400' },
   CANCELED: { className: 'tf-status-muted', dot: 'bg-gray-600' },
 };
 

@@ -10,6 +10,10 @@ import CancelJobDialog from '../components/jobs/CancelJobDialog';
 
 const PAGE_LIMIT = 10;
 const SEARCH_DEBOUNCE_MS = 350;
+const POLL_INTERVAL_MS = 3000;
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'canceled', 'dlq']);
+
+const isTerminal = (status) => TERMINAL_STATUSES.has(String(status).toLowerCase());
 
 const buildParams = ({ search, status, page, limit }) => ({
   search: search || undefined,
@@ -115,6 +119,15 @@ const Jobs = () => {
     }, SEARCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [searchInput]);
+
+  useEffect(() => {
+    const hasActiveJob = jobs.some((job) => !isTerminal(job.status));
+    if (!hasActiveJob) return undefined;
+    const timer = window.setInterval(() => {
+      fetchJobs(buildParams({ search, status, page, limit: PAGE_LIMIT }));
+    }, POLL_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [jobs, search, status, page, fetchJobs]);
 
   const handleStatusChange = (nextStatus) => {
     setStatus(nextStatus);

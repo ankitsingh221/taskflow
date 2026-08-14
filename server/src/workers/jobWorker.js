@@ -308,6 +308,14 @@ const worker = new Worker(
        */
       await job.updateProgress(25);
 
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          progress: 25,
+        },
+        "progress-25",
+      );
+
       await throwIfCanceled(logicalJobId);
 
       /*
@@ -346,6 +354,14 @@ const worker = new Worker(
        */
       await job.updateProgress(75);
 
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          progress: 75,
+        },
+        "progress-75",
+      );
+
       await throwIfCanceled(logicalJobId);
 
       /*
@@ -360,6 +376,14 @@ const worker = new Worker(
        * Progress 100%.
        */
       await job.updateProgress(100);
+
+      await safeUpdateJob(
+        logicalJobId,
+        {
+          progress: 100,
+        },
+        "progress-100",
+      );
 
       /*
        * Final cancellation check.
