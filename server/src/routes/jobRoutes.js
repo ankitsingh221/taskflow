@@ -2,6 +2,7 @@ import express from "express";
 
 import {
   createJob,
+  listJobs,
   getJobStatus,
   getJobAttempts,
   cancelJob,
@@ -16,6 +17,8 @@ router.post(
   jobCreationRateLimiter,
   createJob
 );
+
+router.get("/", listJobs);
 
 router.get("/:id", getJobStatus);
 

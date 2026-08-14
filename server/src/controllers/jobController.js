@@ -681,6 +681,105 @@ export const cancelJob = async (req, res) => {
   }
 };
 
+/*
+ * List Jobs
+ *
+ * Supports:
+ *  - ?search=<term>  (matches job name or logical jobId)
+ *  - ?status=<status> (waiting | scheduled | blocked | active |
+ *                      completed | failed | retrying | canceled | dlq)
+ *  - ?page=<n>       (1-based)
+ *  - ?limit=<n>      (default 20, max 100)
+ */
+export const listJobs = async (req, res) => {
+  try {
+    const {
+      search,
+      status,
+      page = 1,
+      limit = 20,
+    } = req.query;
+
+    const pageNumber = Math.max(
+      1,
+      parseInt(page, 10) || 1
+    );
+    const pageLimit = Math.min(
+      100,
+      Math.max(1, parseInt(limit, 10) || 20)
+    );
+
+    const where = {};
+
+    if (
+      status &&
+      status !== "all"
+    ) {
+      if (status === "dlq") {
+        where.isDeadLetter = true;
+      } else {
+        where.status = status;
+      }
+    }
+
+    if (search && search.trim()) {
+      const term = search.trim();
+
+      where.OR = [
+        {
+          name: {
+            contains: term,
+            mode: "insensitive",
+          },
+        },
+        {
+          jobId: {
+            contains: term,
+            mode: "insensitive",
+          },
+        },
+      ];
+    }
+
+    const [total, jobs] =
+      await Promise.all([
+        prisma.job.count({ where }),
+
+        prisma.job.findMany({
+          where,
+          orderBy: {
+            createdAt: "desc",
+          },
+          skip: (pageNumber - 1) * pageLimit,
+          take: pageLimit,
+        }),
+      ]);
+
+    return res.status(200).json({
+      success: true,
+      jobs,
+      total,
+      page: pageNumber,
+      limit: pageLimit,
+      totalPages: Math.max(
+        1,
+        Math.ceil(total / pageLimit)
+      ),
+    });
+  } catch (error) {
+    console.error(
+      "❌ Failed to list jobs:",
+      error
+    );
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to fetch jobs",
+      error: error.message,
+    });
+  }
+};
+
 export const getJobAttempts = async (req, res) => {
   try {
     const { id } = req.params;
