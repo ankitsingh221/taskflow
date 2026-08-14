@@ -35,6 +35,18 @@ const connection = new IORedis({
   host: process.env.REDIS_HOST,
   port: Number(process.env.REDIS_PORT),
 
+  ...(process.env.REDIS_USERNAME && {
+    username: process.env.REDIS_USERNAME,
+  }),
+
+  ...(process.env.REDIS_PASSWORD && {
+    password: process.env.REDIS_PASSWORD,
+  }),
+
+  ...(process.env.REDIS_TLS === "true" && {
+    tls: {},
+  }),
+
   maxRetriesPerRequest: null,
   enableReadyCheck: true,
 
@@ -42,10 +54,14 @@ const connection = new IORedis({
     Math.min(times * 200, 5000),
 });
 
+connection.on("connect", () => {
+  console.log("🔌 Worker Redis connected");
+});
+
 connection.on("error", (err) => {
   console.error(
     "🔌 Redis connection error:",
-    err.message,
+    err.message
   );
 });
 
