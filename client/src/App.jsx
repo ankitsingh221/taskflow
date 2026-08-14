@@ -5,6 +5,7 @@ import Jobs from './pages/Jobs';
 import JobDetails from './pages/JobDetails';
 import CreateJob from './pages/CreateJob';
 import Workers from './pages/Workers';
+import QueueMonitor from './pages/QueueMonitor';
 import Metrics from './pages/Metrics';
 import DLQ from './pages/DLQ';
 
@@ -17,6 +18,7 @@ const App = () => {
         <Route path="jobs/:jobId" element={<JobDetails />} />
         <Route path="create-job" element={<CreateJob />} />
         <Route path="workers" element={<Workers />} />
+        <Route path="queue" element={<QueueMonitor />} />
         <Route path="metrics" element={<Metrics />} />
         <Route path="dlq" element={<DLQ />} />
       </Route>

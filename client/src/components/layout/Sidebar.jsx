@@ -1,11 +1,12 @@
 import { NavLink } from 'react-router';
-import { Activity, Inbox, LayoutDashboard, ListTodo, PlusCircle, Users, X } from 'lucide-react';
+import { Activity, BarChart3, Inbox, LayoutDashboard, ListTodo, PlusCircle, Users, X } from 'lucide-react';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/jobs', label: 'Jobs', icon: ListTodo },
   { to: '/create-job', label: 'Create Job', icon: PlusCircle },
   { to: '/workers', label: 'Workers', icon: Users },
+  { to: '/queue', label: 'Queue Monitor', icon: BarChart3 },
   { to: '/metrics', label: 'Metrics', icon: Activity },
   { to: '/dlq', label: 'Dead Letter Queue', icon: Inbox },
 ];

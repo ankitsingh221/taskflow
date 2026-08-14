@@ -2,6 +2,7 @@ const VARIANTS = {
   primary: { icon: 'bg-indigo-500/15 text-indigo-400' },
   success: { icon: 'bg-emerald-500/15 text-emerald-400' },
   danger: { icon: 'bg-red-500/15 text-red-400' },
+  warning: { icon: 'bg-amber-500/15 text-amber-400' },
   neutral: { icon: 'bg-gray-500/15 text-gray-400' },
   default: { icon: 'bg-gray-500/15 text-gray-300' },
 };
