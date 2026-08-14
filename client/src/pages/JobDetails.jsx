@@ -9,8 +9,10 @@ import {
 } from '../api/jobs';
 import { getErrorMessage } from '../utils/errors';
 import { formatJson } from '../utils/format';
+import { buildJobActivity } from '../utils/jobActivity';
 import StatusBadge from '../components/ui/StatusBadge';
 import CancelJobDialog from '../components/jobs/CancelJobDialog';
+import JobActivityTimeline from '../components/jobs/JobActivityTimeline';
 import JobHeader from '../components/jobs/JobHeader';
 import JobInfo from '../components/jobs/JobInfo';
 import JobExecution from '../components/jobs/JobExecution';
@@ -277,6 +279,7 @@ const JobDetail = ({ jobId }) => {
     CANCELLABLE_STATUSES.has(String(job.status).toLowerCase()) && !job.isDeadLetter;
   const payloadText = formatJson(job.payload) ?? '{}';
   const resultText = formatJson(job.result);
+  const activityEvents = buildJobActivity(job, attempts);
 
   return (
     <div className="tf-page">
@@ -337,6 +340,8 @@ const JobDetail = ({ jobId }) => {
         </div>
 
         {renderProgress()}
+
+        <JobActivityTimeline events={activityEvents} />
 
         <JobPayload payloadText={payloadText} />
 

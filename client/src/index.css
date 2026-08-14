@@ -125,4 +125,36 @@
   .tf-skeleton {
     @apply animate-pulse rounded-md bg-gray-800;
   }
+
+  .tf-timeline-item {
+    @apply flex gap-4 pb-5 last:pb-0;
+  }
+
+  .tf-timeline-rail {
+    @apply flex flex-col items-center;
+  }
+
+  .tf-timeline-dot {
+    @apply mt-1 h-2.5 w-2.5 shrink-0 rounded-full;
+  }
+
+  .tf-timeline-line {
+    @apply mt-1 w-px flex-1 bg-gray-800;
+  }
+
+  .tf-timeline-content {
+    @apply min-w-0 flex-1;
+  }
+
+  .tf-timeline-title {
+    @apply text-sm font-medium text-gray-200;
+  }
+
+  .tf-timeline-time {
+    @apply shrink-0 text-xs text-gray-500;
+  }
+
+  .tf-timeline-error {
+    @apply mt-1 break-words text-xs text-red-400;
+  }
 }
