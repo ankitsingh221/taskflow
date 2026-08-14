@@ -2,6 +2,7 @@ import { Route, Routes } from 'react-router';
 import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Jobs from './pages/Jobs';
+import JobDetails from './pages/JobDetails';
 import CreateJob from './pages/CreateJob';
 import Workers from './pages/Workers';
 import Metrics from './pages/Metrics';
@@ -13,6 +14,7 @@ const App = () => {
       <Route element={<DashboardLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="jobs" element={<Jobs />} />
+        <Route path="jobs/:jobId" element={<JobDetails />} />
         <Route path="create-job" element={<CreateJob />} />
         <Route path="workers" element={<Workers />} />
         <Route path="metrics" element={<Metrics />} />

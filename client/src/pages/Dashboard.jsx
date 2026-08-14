@@ -14,32 +14,13 @@ import {
 } from 'lucide-react';
 import { getMetrics } from '../api/metrics';
 import { getWorkers } from '../api/workers';
+import { getErrorMessage } from '../utils/errors';
 import StatCard from '../components/dashboard/StatCard';
 import JobStatusChart from '../components/dashboard/JobStatusChart';
 import QueueOverview from '../components/dashboard/QueueOverview';
 import WorkerHealth from '../components/dashboard/WorkerHealth';
 
 const AUTO_REFRESH_MS = 20000;
-
-const getErrorMessage = (err) => {
-  if (err?.code === 'ECONNABORTED') {
-    return 'The request timed out. Please try again.';
-  }
-  if (!err?.response) {
-    return 'The TaskFlow API could not be reached.';
-  }
-  const { status } = err.response;
-  if (status === 401 || status === 403) {
-    return 'You are not authorized to view this data.';
-  }
-  if (status === 404) {
-    return 'The requested data was not found.';
-  }
-  if (status >= 500) {
-    return 'The server encountered an error.';
-  }
-  return 'Something went wrong while loading dashboard data.';
-};
 
 const STATUS_STYLES = {
   checking: { dot: 'bg-gray-500', label: 'Checking...', text: 'text-gray-400' },
