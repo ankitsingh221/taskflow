@@ -1,1 +1,83 @@
 @import "tailwindcss";
+
+@layer components {
+  .tf-page {
+    @apply mx-auto w-full max-w-7xl px-6 py-8;
+  }
+
+  .tf-page-header {
+    @apply mb-8;
+  }
+
+  .tf-page-title {
+    @apply text-2xl font-semibold tracking-tight text-white;
+  }
+
+  .tf-page-description {
+    @apply mt-1 text-sm text-gray-400;
+  }
+
+  .tf-card {
+    @apply rounded-lg border border-gray-800 bg-gray-900 p-5;
+  }
+
+  .tf-button {
+    @apply inline-flex items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-colors duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 disabled:pointer-events-none disabled:opacity-50;
+  }
+
+  .tf-button-primary {
+    @apply bg-indigo-600 text-white hover:bg-indigo-500;
+  }
+
+  .tf-button-secondary {
+    @apply border border-gray-700 bg-transparent text-gray-300 hover:border-gray-600 hover:bg-gray-800 hover:text-white;
+  }
+
+  .tf-button-danger {
+    @apply border border-red-500/40 bg-transparent text-red-400 hover:bg-red-600 hover:text-white;
+  }
+
+  .tf-input {
+    @apply w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 placeholder:text-gray-500 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/40;
+  }
+
+  .tf-select {
+    @apply w-full rounded-md border border-gray-700 bg-gray-900 px-3 py-2 text-sm text-gray-200 focus:border-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500/40;
+  }
+
+  .tf-status {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium;
+  }
+
+  .tf-status-info {
+    @apply border-indigo-500/30 bg-indigo-500/10 text-indigo-400;
+  }
+
+  .tf-status-success {
+    @apply border-emerald-500/30 bg-emerald-500/10 text-emerald-400;
+  }
+
+  .tf-status-danger {
+    @apply border-red-500/30 bg-red-500/10 text-red-400;
+  }
+
+  .tf-status-warning {
+    @apply border-amber-500/30 bg-amber-500/10 text-amber-400;
+  }
+
+  .tf-status-neutral {
+    @apply border-gray-700 bg-gray-800/60 text-gray-400;
+  }
+
+  .tf-status-muted {
+    @apply border-gray-800 bg-gray-900 text-gray-500;
+  }
+
+  .tf-divider {
+    @apply my-4 border-t border-gray-800;
+  }
+
+  .tf-skeleton {
+    @apply animate-pulse rounded-md bg-gray-800;
+  }
+}

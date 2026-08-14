@@ -1,5 +1,5 @@
 import { Route, Routes } from 'react-router';
-import AppLayout from './layouts/AppLayout';
+import DashboardLayout from './layouts/DashboardLayout';
 import Dashboard from './pages/Dashboard';
 import Jobs from './pages/Jobs';
 import CreateJob from './pages/CreateJob';
@@ -10,7 +10,7 @@ import DLQ from './pages/DLQ';
 const App = () => {
   return (
     <Routes>
-      <Route element={<AppLayout />}>
+      <Route element={<DashboardLayout />}>
         <Route index element={<Dashboard />} />
         <Route path="jobs" element={<Jobs />} />
         <Route path="create-job" element={<CreateJob />} />

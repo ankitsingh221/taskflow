@@ -1,5 +1,9 @@
-const CreateJob = () => {
-  return <h1 className="text-3xl font-bold">Create Job</h1>;
-};
+import PageHeader from '../components/ui/PageHeader';
+
+const CreateJob = () => (
+  <div className="tf-page">
+    <PageHeader title="Create Job" description="Submit a new job to the queue." />
+  </div>
+);
 
 export default CreateJob;

@@ -1,5 +1,9 @@
-const Workers = () => {
-  return <h1 className="text-3xl font-bold">Workers</h1>;
-};
+import PageHeader from '../components/ui/PageHeader';
+
+const Workers = () => (
+  <div className="tf-page">
+    <PageHeader title="Workers" description="Monitor and manage registered workers." />
+  </div>
+);
 
 export default Workers;
