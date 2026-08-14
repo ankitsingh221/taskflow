@@ -6,6 +6,7 @@ const PAGE_TITLES = {
   '/jobs': 'Jobs',
   '/create-job': 'Create Job',
   '/workers': 'Workers',
+  '/queue': 'Queue Monitor',
   '/metrics': 'Metrics',
   '/dlq': 'Dead Letter Queue',
 };

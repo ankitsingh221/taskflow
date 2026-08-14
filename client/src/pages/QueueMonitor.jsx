@@ -5,6 +5,7 @@ import { getJobs } from '../api/jobs';
 import { getErrorMessage } from '../utils/errors';
 import StatCard from '../components/dashboard/StatCard';
 import QueueDistribution from '../components/queue/QueueDistribution';
+import QueueHealthPanel from '../components/queue/QueueHealthPanel';
 import WorkerSummaryPanel from '../components/queue/WorkerSummaryPanel';
 import RecentActivity from '../components/queue/RecentActivity';
 
@@ -198,15 +199,7 @@ const QueueMonitor = () => {
       ) : (
         <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-3">
           <QueueDistribution metrics={metrics} />
-          <div className="tf-card h-full">
-            <h3 className="tf-section-title">Queue Activity</h3>
-            <p className="mt-1 text-sm text-gray-400">
-              Historical metrics are not available yet.
-            </p>
-            <p className="mt-4 text-sm text-gray-500">
-              The backend does not currently expose time-series queue activity data.
-            </p>
-          </div>
+          <QueueHealthPanel metrics={metrics} />
           <WorkerSummaryPanel workers={workers} />
         </div>
       )}

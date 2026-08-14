@@ -64,7 +64,7 @@ const NavList = ({ onNavigate }) => (
 
 const Sidebar = ({ open, onClose }) => (
   <>
-    <aside className="hidden w-64 shrink-0 flex-col border-r border-gray-800 bg-black lg:flex">
+    <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col border-r border-gray-800 bg-black lg:flex">
       <Brand />
       <NavList />
     </aside>
